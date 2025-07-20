@@ -1,12 +1,121 @@
 class HomeAutomation {
     constructor() {
         this.ws = null;
+        this.loadChart = null;
+        this.loadData = {
+            labels: [],
+            load1: [],
+            load5: [],
+            load15: []
+        };
+        this.maxDataPoints = 20;
         this.init();
     }
 
     init() {
         this.connectWebSocket();
         this.setupToasts();
+        this.setupLoadChart();
+        this.startSystemStatsPolling();
+    }
+
+    setupLoadChart() {
+        const ctx = document.getElementById('loadChart').getContext('2d');
+        this.loadChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: this.loadData.labels,
+                datasets: [{
+                    label: '1 min',
+                    data: this.loadData.load1,
+                    borderColor: 'rgb(255, 99, 132)',
+                    backgroundColor: 'rgba(255, 99, 132, 0.1)',
+                    tension: 0.4
+                }, {
+                    label: '5 min',
+                    data: this.loadData.load5,
+                    borderColor: 'rgb(54, 162, 235)',
+                    backgroundColor: 'rgba(54, 162, 235, 0.1)',
+                    tension: 0.4
+                }, {
+                    label: '15 min',
+                    data: this.loadData.load15,
+                    borderColor: 'rgb(75, 192, 192)',
+                    backgroundColor: 'rgba(75, 192, 192, 0.1)',
+                    tension: 0.4
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        title: {
+                            display: true,
+                            text: 'Load Average'
+                        }
+                    },
+                    x: {
+                        title: {
+                            display: true,
+                            text: 'Time'
+                        }
+                    }
+                },
+                plugins: {
+                    title: {
+                        display: true,
+                        text: 'System Load Average'
+                    },
+                    legend: {
+                        position: 'top'
+                    }
+                }
+            }
+        });
+    }
+
+    startSystemStatsPolling() {
+        this.updateSystemStats();
+        setInterval(() => this.updateSystemStats(), 30000); // Update every 30 seconds
+    }
+
+    async updateSystemStats() {
+        try {
+            const response = await fetch('/api/system-stats');
+            const stats = await response.json();
+            
+            // Update uptime
+            document.getElementById('uptime-text').textContent = stats.uptime || 'Unknown';
+            
+            // Update memory
+            const memoryPercent = stats.memoryTotal > 0 ? 
+                ((stats.memoryUsed / stats.memoryTotal) * 100).toFixed(1) : 0;
+            document.getElementById('memory-text').textContent = `${memoryPercent}%`;
+            document.getElementById('memory-bar').style.width = `${memoryPercent}%`;
+            
+            // Update load chart
+            const now = new Date().toLocaleTimeString();
+            this.loadData.labels.push(now);
+            this.loadData.load1.push(stats.loadAvg1 || 0);
+            this.loadData.load5.push(stats.loadAvg5 || 0);
+            this.loadData.load15.push(stats.loadAvg15 || 0);
+            
+            // Keep only last maxDataPoints
+            if (this.loadData.labels.length > this.maxDataPoints) {
+                this.loadData.labels.shift();
+                this.loadData.load1.shift();
+                this.loadData.load5.shift();
+                this.loadData.load15.shift();
+            }
+            
+            this.loadChart.update();
+            
+        } catch (error) {
+            console.error('Failed to fetch system stats:', error);
+            this.showToast('Failed to update system stats', 'warning');
+        }
     }
 
     connectWebSocket() {
@@ -14,6 +123,8 @@ class HomeAutomation {
         
         this.ws.onopen = () => {
             this.showToast('Connected to server', 'success');
+            document.getElementById('system-status').innerHTML = 
+                '<i class="bi bi-circle-fill text-success"></i> System Online';
         };
 
         this.ws.onmessage = (event) => {
@@ -25,11 +136,15 @@ class HomeAutomation {
 
         this.ws.onclose = () => {
             this.showToast('Connection lost. Reconnecting...', 'warning');
+            document.getElementById('system-status').innerHTML = 
+                '<i class="bi bi-circle-fill text-warning"></i> Reconnecting...';
             setTimeout(() => this.connectWebSocket(), 3000);
         };
 
         this.ws.onerror = (error) => {
             this.showToast('Connection error', 'danger');
+            document.getElementById('system-status').innerHTML = 
+                '<i class="bi bi-circle-fill text-danger"></i> Connection Error';
         };
     }
 
@@ -69,7 +184,7 @@ class HomeAutomation {
         
         const bgClass = {
             'success': 'bg-success',
-            'danger': 'bg-danger',
+            'danger': 'bg-danger', 
             'warning': 'bg-warning',
             'info': 'bg-info'
         }[type] || 'bg-info';
@@ -89,111 +204,4 @@ class HomeAutomation {
         const toast = new bootstrap.Toast(toastElement, { delay: 3000 });
         toast.show();
 
-        toastElement.addEventListener('hidden.bs.toast', () => {
-            toastElement.remove();
-        });
-    }
-}
-
-// Global functions for template compatibility
-function sendCommand(deviceId, topic, payload) {
-    app.sendCommand(deviceId, topic, payload);
-}
-
-function toggleCommand(deviceId, topic, payload, button) {
-    app.toggleCommand(deviceId, topic, payload, button);
-}
-
-function filterCategory(category) {
-    app.filterCategory(category);
-}
-
-// Initialize app
-const app = {
-    homeAutomation: null,
-
-    init() {
-        this.homeAutomation = new HomeAutomation();
-    },
-
-    sendCommand(deviceId, topic, payload) {
-        fetch('/api/control', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({device: deviceId, topic: topic, payload: payload})
-        })
-        .then(response => {
-            if (response.ok) {
-                this.homeAutomation.showToast(`Command sent: ${payload}`, 'success');
-            } else {
-                this.homeAutomation.showToast('Command failed', 'danger');
-            }
-        })
-        .catch(error => {
-            this.homeAutomation.showToast('Network error', 'danger');
-        });
-    },
-
-    toggleCommand(deviceId, topic, payload, button) {
-        const isActive = button.classList.contains('active');
-        const newPayload = isActive ? 'OFF' : payload;
-        const icon = button.querySelector('i');
-        
-        button.classList.toggle('active');
-        if (button.classList.contains('active')) {
-            button.classList.remove('btn-outline-primary');
-            button.classList.add('btn-success');
-            icon.className = 'bi bi-toggle-on';
-        } else {
-            button.classList.remove('btn-success');
-            button.classList.add('btn-outline-primary');
-            icon.className = 'bi bi-toggle-off';
-        }
-        
-        this.sendCommand(deviceId, topic, newPayload);
-    },
-
-    filterCategory(category) {
-        const devices = document.querySelectorAll('.device-card');
-        const buttons = document.querySelectorAll('[data-category]');
-        
-        // Update button states
-        buttons.forEach(btn => {
-            btn.classList.remove('active');
-            btn.classList.add('btn-outline-primary');
-            btn.classList.remove('btn-primary');
-        });
-        
-        const activeButton = document.querySelector(`[data-category="${category}"]`);
-        if (activeButton) {
-            activeButton.classList.add('active');
-            activeButton.classList.remove('btn-outline-primary');
-            activeButton.classList.add('btn-primary');
-        }
-        
-        // Filter devices with animation
-        devices.forEach(device => {
-            if (category === 'all' || device.dataset.category === category) {
-                device.style.display = 'block';
-                device.style.animation = 'fadeIn 0.3s ease-in';
-            } else {
-                device.style.display = 'none';
-            }
-        });
-    }
-};
-
-// Initialize when DOM is loaded
-document.addEventListener('DOMContentLoaded', () => {
-    app.init();
-});
-
-// Add CSS animation
-const style = document.createElement('style');
-style.textContent = `
-    @keyframes fadeIn {
-        from { opacity: 0; transform: translateY(10px); }
-        to { opacity: 1; transform: translateY(0); }
-    }
-`;
-document.head.appendChild(style);
+        toastElement.addEventListener('hidden.bs.

@@ -3,18 +3,72 @@
     <mqtt broker="localhost" port="1883" username="" password="" clientId="home-automation"/>
     
     <categories>
-        <category id="lights" name="Lights" icon="💡"/>
-        <category id="climate" name="Climate" icon="🌡️"/>
+        <category id="lights" name="Smart Lights" icon="💡"/>
+        <category id="system" name="System Control" icon="💻"/>
+        <category id="hvac" name="Climate" icon="🌡️"/>
         <category id="security" name="Security" icon="🔒"/>
     </categories>
     
     <devices>
+        <!-- Smart Light with MQTT -->
         <device id="living-room-light" name="Living Room Light" category="lights">
-            <statusTopic>home/living-room/light/status</statusTopic>
+            <statusTopic>zigbee2mqtt/living_room_light</statusTopic>
             <controls>
-                <control type="button" label="Turn On" topic="home/living-room/light/set" payload="ON"/>
-                <control type="button" label="Turn Off" topic="home/living-room/light/set" payload="OFF"/>
-                <control type="slider" label="Brightness" topic="home/living-room/light/brightness" min="0" max="100"/>
+                <control type="button" label="Turn On" topic="zigbee2mqtt/living_room_light/set" payload='{"state":"ON"}'/>
+                <control type="button" label="Turn Off" topic="zigbee2mqtt/living_room_light/set" payload='{"state":"OFF"}'/>
+                <control type="slider" label="Brightness" topic="zigbee2mqtt/living_room_light/set" min="1" max="254"/>
+                <control type="toggle" label="Power" topic="zigbee2mqtt/living_room_light/set" payload='{"state":"ON"}'/>
+            </controls>
+        </device>
+
+        <!-- Bedroom Light -->
+        <device id="bedroom-light" name="Bedroom Light" category="lights">
+            <statusTopic>zigbee2mqtt/bedroom_light</statusTopic>
+            <controls>
+                <control type="button" label="Turn On" topic="zigbee2mqtt/bedroom_light/set" payload='{"state":"ON"}'/>
+                <control type="button" label="Turn Off" topic="zigbee2mqtt/bedroom_light/set" payload='{"state":"OFF"}'/>
+                <control type="slider" label="Brightness" topic="zigbee2mqtt/bedroom_light/set" min="1" max="254"/>
+            </controls>
+        </device>
+
+        <!-- System Control with Local Commands -->
+        <device id="linux-server" name="Linux Server" category="system">
+            <statusTopic>homeassistant/sensor/server_status</statusTopic>
+            <controls>
+                <control type="button" label="Restart Network" localCommand="sudo systemctl restart networking"/>
+                <control type="button" label="Update System" localCommand="sudo apt update && sudo apt upgrade -y"/>
+                <control type="button" label="Reboot Server" localCommand="sudo shutdown -r +1"/>
+                <control type="button" label="Check Disk Space" localCommand="df -h"/>
+            </controls>
+        </device>
+
+        <!-- Docker Control -->
+        <device id="docker-services" name="Docker Services" category="system">
+            <controls>
+                <control type="button" label="Start Home Assistant" localCommand="docker start homeassistant"/>
+                <control type="button" label="Stop Home Assistant" localCommand="docker stop homeassistant"/>
+                <control type="button" label="Restart Mosquitto" localCommand="docker restart mosquitto"/>
+                <control type="button" label="Docker Status" localCommand="docker ps"/>
+            </controls>
+        </device>
+
+        <!-- Thermostat -->
+        <device id="thermostat" name="Main Thermostat" category="hvac">
+            <statusTopic>zigbee2mqtt/thermostat</statusTopic>
+            <controls>
+                <control type="slider" label="Target Temp" topic="zigbee2mqtt/thermostat/set" min="60" max="85"/>
+                <control type="button" label="Heat Mode" topic="zigbee2mqtt/thermostat/set" payload='{"system_mode":"heat"}'/>
+                <control type="button" label="Cool Mode" topic="zigbee2mqtt/thermostat/set" payload='{"system_mode":"cool"}'/>
+                <control type="button" label="Auto Mode" topic="zigbee2mqtt/thermostat/set" payload='{"system_mode":"auto"}'/>
+            </controls>
+        </device>
+
+        <!-- Smart Door Lock -->
+        <device id="front-door-lock" name="Front Door Lock" category="security">
+            <statusTopic>zigbee2mqtt/front_door_lock</statusTopic>
+            <controls>
+                <control type="button" label="Lock Door" topic="zigbee2mqtt/front_door_lock/set" payload='{"state":"LOCK"}'/>
+                <control type="button" label="Unlock Door" topic="zigbee2mqtt/front_door_lock/set" payload='{"state":"UNLOCK"}'/>
             </controls>
         </device>
     </devices>
