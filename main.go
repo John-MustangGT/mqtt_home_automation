@@ -277,11 +277,13 @@ func (app *App) handleIndex(w http.ResponseWriter, r *http.Request) {
 		Categories []Category
 		Devices    []Device
 		Title      string
+		ID	   string
 	}{
 		Config:     app.config,
 		Categories: app.config.Categories,
 		Devices:    app.config.Devices,
 		Title:      "Home Automation Control",
+		ID:	    "StaticID",
 	}
 
 	if err := app.templates.ExecuteTemplate(w, "index.html", data); err != nil {
