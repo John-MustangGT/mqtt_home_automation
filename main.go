@@ -1,9 +1,4 @@
-type Control struct {
-	Type         string `xml:"type,attr"` // button, slider, toggle
-	Label        string `xml:"label,attr"`
-	Topic        string `xml:"topic,omitempty"`
-	Payload      string `xml:"payload,omitempty"`
-	LocalCommand string `xml:"localpackage main
+package main
 
 import (
 	"encoding/json"
