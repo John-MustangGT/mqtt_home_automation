@@ -1,0 +1,53 @@
+.device-status .badge {
+    font-size: 0.75em;
+}
+
+.device-card {
+    transition: transform 0.2s;
+}
+
+.device-card:hover {
+    transform: translateY(-2px);
+}
+
+.card {
+    border: 1px solid rgba(0,0,0,.125);
+}
+
+.card-header {
+    background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+}
+
+.toggle-btn.active {
+    background-color: var(--bs-success);
+    border-color: var(--bs-success);
+    color: white;
+}
+
+.toggle-btn.active i::before {
+    content: "\f627"; /* toggle-on icon */
+}
+
+.btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.status-online {
+    color: var(--bs-success) !important;
+}
+
+.status-offline {
+    color: var(--bs-danger) !important;
+}
+
+.navbar-brand {
+    font-weight: 600;
+}
+
+@media (max-width: 768px) {
+    .container {
+        padding-left: 15px;
+        padding-right: 15px;
+    }
+}
