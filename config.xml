@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<config>
+    <mqtt broker="localhost" port="1883" username="" password="" clientId="home-automation"/>
+    
+    <categories>
+        <category id="lights" name="Lights" icon="💡"/>
+        <category id="climate" name="Climate" icon="🌡️"/>
+        <category id="security" name="Security" icon="🔒"/>
+    </categories>
+    
+    <devices>
+        <device id="living-room-light" name="Living Room Light" category="lights">
+            <statusTopic>home/living-room/light/status</statusTopic>
+            <controls>
+                <control type="button" label="Turn On" topic="home/living-room/light/set" payload="ON"/>
+                <control type="button" label="Turn Off" topic="home/living-room/light/set" payload="OFF"/>
+                <control type="slider" label="Brightness" topic="home/living-room/light/brightness" min="0" max="100"/>
+            </controls>
+        </device>
+    </devices>
+</config>
