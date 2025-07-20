@@ -1,6 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <config>
-    <mqtt broker="localhost" port="1883" username="" password="" clientId="home-automation"/>
+    <mqtt broker="localhost" port="1883" username="" password="" clientId="home-automation" debug="true"/>
+    
+    <!-- Debug settings -->
+    <debug>
+        <mqtt enabled="true" logLevel="verbose"/> <!-- options: basic, verbose -->
+        <websocket enabled="true"/>
+        <commands enabled="true"/>
+    </debug>
     
     <categories>
         <category id="lights" name="Smart Lights" icon="💡"/>

@@ -111,7 +111,7 @@
                         <div class="d-grid gap-2">
                             {{range .Controls}}
                             {{if eq .Type "button"}}
-                            <button class="btn btn-success btn-sm" onclick="sendCommand('{{$.ID}}', '{{.Topic}}', '{{.Payload}}', '{{.LocalCommand}}')">
+                            <button class="btn btn-success btn-sm" onclick="sendCommand('{{$.ID}}', '{{.Topic | safeAttr}}', '{{.Payload | safeAttr}}', '{{.LocalCommand | safeAttr}}')">
                                 <i class="bi bi-power"></i> {{.Label}}
                             </button>
                             {{else if eq .Type "slider"}}
@@ -119,7 +119,7 @@
                                 <label class="form-label small">{{.Label}}: <span id="slider-{{$.ID}}-{{.Label}}">{{.Min}}</span></label>
                                 <input type="range" class="form-range" min="{{.Min}}" max="{{.Max}}" value="{{.Min}}"
                                        oninput="updateSliderValue('{{$.ID}}', '{{.Label}}', this.value)"
-                                       onchange="sendSliderCommand('{{$.ID}}', '{{.Topic}}', '{{.Label}}', this.value)">
+                                       onchange="sendSliderCommand('{{$.ID}}', '{{.Topic | safeAttr}}', '{{.Label}}', this.value)">
                                 <div class="d-flex justify-content-between small text-muted">
                                     <span>{{.Min}}</span>
                                     <span>{{.Max}}</span>
@@ -127,7 +127,7 @@
                             </div>
                             {{else if eq .Type "toggle"}}
                             <button class="btn btn-outline-primary btn-sm toggle-btn" id="toggle-{{$.ID}}-{{.Label}}" 
-                                    onclick="toggleCommand('{{$.ID}}', '{{.Topic}}', '{{.Payload}}', '{{.LocalCommand}}', this)">
+                                    onclick="toggleCommand('{{$.ID}}', '{{.Topic | safeAttr}}', '{{.Payload | safeAttr}}', '{{.LocalCommand | safeAttr}}', this)">
                                 <i class="bi bi-toggle-off"></i> {{.Label}}
                             </button>
                             {{end}}

@@ -37,19 +37,19 @@ type MQTTConfig struct {
 }
 
 type Device struct {
-	ID          string   `xml:"id,attr"`
-	Name        string   `xml:"name,attr"`
-	Category    string   `xml:"category,attr"`
-	StatusTopic string   `xml:"statusTopic"`
+	ID          string    `xml:"id,attr"`
+	Name        string    `xml:"name,attr"`
+	Category    string    `xml:"category,attr"`
+	StatusTopic string    `xml:"statusTopic"`
 	Controls    []Control `xml:"controls>control"`
 }
 
 type Control struct {
 	Type         string `xml:"type,attr"` // button, slider, toggle
 	Label        string `xml:"label,attr"`
-	Topic        string `xml:"topic,omitempty"`
-	Payload      string `xml:"payload,omitempty"`
-	LocalCommand string `xml:"localCommand,omitempty"`
+	Topic        string `xml:"topic,attr,omitempty"`
+	Payload      string `xml:"payload,attr,omitempty"`
+	LocalCommand string `xml:"localCommand,attr,omitempty"`
 	Min          int    `xml:"min,attr,omitempty"`
 	Max          int    `xml:"max,attr,omitempty"`
 }
@@ -80,21 +80,21 @@ type SystemStats struct {
 }
 
 type WebSocketMessage struct {
-	Type    string      `json:"type"`
-	DeviceID string     `json:"deviceId,omitempty"`
-	Data    interface{} `json:"data"`
+	Type     string      `json:"type"`
+	DeviceID string      `json:"deviceId,omitempty"`
+	Data     interface{} `json:"data"`
 }
 
 // Application state
 type App struct {
-	config        Config
-	mqttClient    mqtt.Client
-	deviceStatus  map[string]*DeviceStatus
-	statusMutex   sync.RWMutex
-	wsClients     map[*websocket.Conn]bool
-	wsMutex       sync.RWMutex
-	wsUpgrader    websocket.Upgrader
-	templates     *template.Template
+	config       Config
+	mqttClient   mqtt.Client
+	deviceStatus map[string]*DeviceStatus
+	statusMutex  sync.RWMutex
+	wsClients    map[*websocket.Conn]bool
+	wsMutex      sync.RWMutex
+	wsUpgrader   websocket.Upgrader
+	templates    *template.Template
 }
 
 func main() {
@@ -133,7 +133,7 @@ func main() {
 	http.HandleFunc("/api/control", app.handleControl)
 	http.HandleFunc("/api/status", app.handleStatus)
 	http.HandleFunc("/api/system-stats", app.handleSystemStats)
-	
+
 	// Serve static files
 	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("./static/"))))
 
@@ -147,19 +147,44 @@ func (app *App) loadConfig(filename string) error {
 		return err
 	}
 
-	return xml.Unmarshal(data, &app.config)
+	if err := xml.Unmarshal(data, &app.config); err != nil {
+		return err
+	}
+
+	// Debug: Print parsed configuration
+	log.Printf("Loaded %d devices", len(app.config.Devices))
+	for _, device := range app.config.Devices {
+		log.Printf("Device: %s (%s)", device.Name, device.ID)
+		for i, control := range device.Controls {
+			log.Printf("  Control %d: Type=%s, Label=%s, Topic='%s', Payload='%s', LocalCommand='%s'",
+				i, control.Type, control.Label, control.Topic, control.Payload, control.LocalCommand)
+		}
+	}
+
+	return nil
 }
 
 func (app *App) loadTemplates() error {
 	var err error
-	
+
+	// Create template with custom functions
+	funcMap := template.FuncMap{
+		"safeAttr": func(s string) string {
+			// Escape single quotes and ensure empty strings are properly handled
+			if s == "" {
+				return ""
+			}
+			return strings.ReplaceAll(s, "'", "\\'")
+		},
+	}
+
 	// Parse all HTML templates from the templates directory
 	templatePattern := filepath.Join("templates", "*.html")
-	app.templates, err = template.ParseGlob(templatePattern)
+	app.templates, err = template.New("").Funcs(funcMap).ParseGlob(templatePattern)
 	if err != nil {
 		return fmt.Errorf("failed to parse templates: %v", err)
 	}
-	
+
 	log.Printf("Loaded templates: %v", app.templates.DefinedTemplates())
 	return nil
 }
@@ -186,7 +211,7 @@ func (app *App) connectMQTT() error {
 	})
 
 	app.mqttClient = mqtt.NewClient(opts)
-	
+
 	if token := app.mqttClient.Connect(); token.Wait() && token.Error() != nil {
 		return token.Error()
 	}
@@ -214,11 +239,11 @@ func (app *App) subscribeToStatusTopics() {
 		if device.StatusTopic != "" {
 			topic := device.StatusTopic
 			deviceID := device.ID
-			
+
 			token := app.mqttClient.Subscribe(topic, 1, func(client mqtt.Client, msg mqtt.Message) {
 				app.handleStatusUpdate(deviceID, msg.Topic(), string(msg.Payload()))
 			})
-			
+
 			if token.Wait() && token.Error() != nil {
 				log.Printf("Failed to subscribe to %s: %v", topic, token.Error())
 			} else {
@@ -244,9 +269,9 @@ func (app *App) handleStatusUpdate(deviceID, topic, payload string) {
 		} else {
 			deviceStatus.Status = jsonData.(map[string]interface{})
 		}
-		
+
 		deviceStatus.Status["lastUpdate"] = time.Now().Format(time.RFC3339)
-		
+
 		// Broadcast update to WebSocket clients
 		app.broadcastUpdate(deviceID, deviceStatus.Status)
 	}
@@ -277,13 +302,13 @@ func (app *App) handleIndex(w http.ResponseWriter, r *http.Request) {
 		Categories []Category
 		Devices    []Device
 		Title      string
-		ID	   string
+		ID         string
 	}{
 		Config:     app.config,
 		Categories: app.config.Categories,
 		Devices:    app.config.Devices,
 		Title:      "Home Automation Control",
-		ID:	    "StaticID",
+		ID:         "StaticID",
 	}
 
 	if err := app.templates.ExecuteTemplate(w, "index.html", data); err != nil {
@@ -347,6 +372,9 @@ func (app *App) handleControl(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	log.Printf("Received control request: Device=%s, Topic=%s, Payload=%s, LocalCommand=%s",
+		req.Device, req.Topic, req.Payload, req.LocalCommand)
+
 	// Execute local command if specified
 	if req.LocalCommand != "" {
 		go app.executeLocalCommand(req.LocalCommand)
@@ -368,10 +396,10 @@ func (app *App) handleControl(w http.ResponseWriter, r *http.Request) {
 
 func (app *App) executeLocalCommand(command string) {
 	log.Printf("Executing local command: %s", command)
-	
+
 	cmd := exec.Command("sh", "-c", command)
 	output, err := cmd.CombinedOutput()
-	
+
 	if err != nil {
 		log.Printf("Local command failed: %v, Output: %s", err, string(output))
 	} else {
@@ -395,12 +423,12 @@ func (app *App) handleSystemStats(w http.ResponseWriter, r *http.Request) {
 
 func (app *App) getSystemStats() SystemStats {
 	stats := SystemStats{}
-	
+
 	// Get uptime
 	if output, err := exec.Command("uptime", "-p").Output(); err == nil {
 		stats.Uptime = strings.TrimSpace(string(output))
 	}
-	
+
 	// Get load average
 	if output, err := exec.Command("cat", "/proc/loadavg").Output(); err == nil {
 		fields := strings.Fields(string(output))
@@ -416,7 +444,7 @@ func (app *App) getSystemStats() SystemStats {
 			}
 		}
 	}
-	
+
 	// Get memory info
 	if output, err := exec.Command("free", "-m").Output(); err == nil {
 		lines := strings.Split(string(output), "\n")
@@ -433,13 +461,13 @@ func (app *App) getSystemStats() SystemStats {
 			}
 		}
 	}
-	
+
 	// Get CPU count
 	if output, err := exec.Command("nproc").Output(); err == nil {
 		if cpus, err := strconv.Atoi(strings.TrimSpace(string(output))); err == nil {
 			stats.CPUCount = cpus
 		}
 	}
-	
+
 	return stats
 }
