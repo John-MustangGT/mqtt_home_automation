@@ -36,7 +36,7 @@
             <statusTopic>homeassistant/sensor/server_status</statusTopic>
             <controls>
                 <control type="button" label="Restart Network" localCommand="sudo systemctl restart networking"/>
-                <control type="button" label="Update System" localCommand="sudo apt update && sudo apt upgrade -y"/>
+                <control type="button" label="Update System" localCommand="sudo apt update &amp;&amp; sudo apt upgrade -y"/>
                 <control type="button" label="Reboot Server" localCommand="sudo shutdown -r +1"/>
                 <control type="button" label="Check Disk Space" localCommand="df -h"/>
             </controls>
