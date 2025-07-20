@@ -204,4 +204,96 @@ class HomeAutomation {
         const toast = new bootstrap.Toast(toastElement, { delay: 3000 });
         toast.show();
 
-        toastElement.addEventListener('hidden.bs.
+        toastElement.addEventListener('hidden.bs.toast', () => {
+            toastElement.remove();
+        });
+    }
+}
+
+// Global functions for button clicks (called from HTML)
+async function sendCommand(deviceId, topic, payload, localCommand) {
+    try {
+        const response = await fetch('/api/control', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                device: deviceId,
+                topic: topic,
+                payload: payload,
+                localCommand: localCommand
+            })
+        });
+
+        if (response.ok) {
+            if (topic) {
+                app.showToast(`MQTT command sent to ${topic}`, 'success');
+                console.log(`MQTT command sent - Topic: ${topic}, Payload: ${payload}`);
+            }
+            if (localCommand) {
+                app.showToast(`Local command executed: ${localCommand}`, 'success');
+                console.log(`Local command executed: ${localCommand}`);
+            }
+        } else {
+            throw new Error(`HTTP ${response.status}`);
+        }
+    } catch (error) {
+        console.error('Failed to send command:', error);
+        app.showToast('Failed to send command', 'danger');
+    }
+}
+
+async function sendSliderCommand(deviceId, topic, label, value) {
+    const payload = JSON.stringify({
+        [label.toLowerCase()]: parseInt(value)
+    });
+    
+    await sendCommand(deviceId, topic, payload, '');
+}
+
+function updateSliderValue(deviceId, label, value) {
+    document.getElementById(`slider-${deviceId}-${label}`).textContent = value;
+}
+
+async function toggleCommand(deviceId, topic, payload, localCommand, button) {
+    const isActive = button.classList.contains('active');
+    
+    if (isActive) {
+        button.classList.remove('active');
+        button.innerHTML = '<i class="bi bi-toggle-off"></i> ' + button.textContent.trim();
+    } else {
+        button.classList.add('active');
+        button.innerHTML = '<i class="bi bi-toggle-on"></i> ' + button.textContent.trim();
+    }
+    
+    await sendCommand(deviceId, topic, payload, localCommand);
+}
+
+function filterCategory(categoryId) {
+    const devices = document.querySelectorAll('.device-card');
+    const buttons = document.querySelectorAll('[data-category]');
+    
+    // Update button states
+    buttons.forEach(btn => {
+        btn.classList.remove('active');
+        if (btn.dataset.category === categoryId) {
+            btn.classList.add('active');
+        }
+    });
+    
+    // Show/hide devices
+    devices.forEach(device => {
+        if (categoryId === 'all' || device.dataset.category === categoryId) {
+            device.style.display = 'block';
+        } else {
+            device.style.display = 'none';
+        }
+    });
+}
+
+// Initialize the application
+let app;
+document.addEventListener('DOMContentLoaded', function() {
+    app = new HomeAutomation();
+});
