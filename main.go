@@ -16,6 +16,8 @@ import (
 	"sync"
 	"time"
 
+	uuid "github.com/google/uuid"
+
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 	"github.com/gorilla/websocket"
 )
@@ -308,7 +310,7 @@ func (app *App) handleIndex(w http.ResponseWriter, r *http.Request) {
 		Categories: app.config.Categories,
 		Devices:    app.config.Devices,
 		Title:      "Home Automation Control",
-		ID:         "StaticID",
+		ID:         uuid.NewString(),
 	}
 
 	if err := app.templates.ExecuteTemplate(w, "index.html", data); err != nil {
