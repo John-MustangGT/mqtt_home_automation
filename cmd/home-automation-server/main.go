@@ -118,6 +118,7 @@ func main() {
 	configFile := flag.String("config", "config.xml", "Path to configuration file")
 	suppressTimestamp := flag.Bool("no-timestamp", false, "Suppress timestamps in log output")
 	webDir := flag.String("webdir", ".", "Parent directory containing 'static' and 'templates' subdirectories")
+	enableWildcard := flag.Bool("log-all-mqtt", false, "Log all MQTT messages using wildcard subscription")
 	flag.Parse()
 
 	app := &App{
@@ -143,7 +144,6 @@ func main() {
 	if app.config.MQTT.RetryInterval == 0 {
 		app.config.MQTT.RetryInterval = 5 // default 5 seconds
 	}
-	// MaxRetries of 0 means infinite retries (default behavior)
 
 	// Connect to MQTT with retry logic
 	if err := app.connectMQTTWithRetry(); err != nil {
@@ -160,6 +160,11 @@ func main() {
 
 	// Subscribe to status topics
 	app.subscribeToStatusTopics()
+
+	// Optionally subscribe to all messages for logging
+	if *enableWildcard {
+		app.subscribeToAllMessages()
+	}
 
 	// Setup HTTP routes
 	http.HandleFunc("/", app.handleIndex)
@@ -210,7 +215,7 @@ func (app *App) loadConfig(filename string) error {
 
 func (app *App) connectMQTTWithRetry() error {
 	retryCount := 0
-	
+
 	for {
 		err := app.connectMQTT()
 		if err == nil {
@@ -218,7 +223,7 @@ func (app *App) connectMQTTWithRetry() error {
 		}
 
 		retryCount++
-		
+
 		// Check if we've exceeded max retries (0 means infinite)
 		if app.config.MQTT.MaxRetries > 0 && retryCount >= app.config.MQTT.MaxRetries {
 			return fmt.Errorf("failed to connect to MQTT after %d attempts: %v", retryCount, err)
@@ -226,7 +231,7 @@ func (app *App) connectMQTTWithRetry() error {
 
 		log.Printf("Failed to connect to MQTT (attempt %d): %v", retryCount, err)
 		log.Printf("Waiting %d seconds before retry...", app.config.MQTT.RetryInterval)
-		
+
 		time.Sleep(time.Duration(app.config.MQTT.RetryInterval) * time.Second)
 	}
 }
@@ -304,13 +309,13 @@ func (app *App) connectMQTT() error {
 
 func (app *App) reconnectMQTT() {
 	retryCount := 0
-	
+
 	for !app.mqttClient.IsConnected() {
 		retryCount++
 		log.Printf("MQTT reconnection attempt %d...", retryCount)
-		
+
 		time.Sleep(time.Duration(app.config.MQTT.RetryInterval) * time.Second)
-		
+
 		// The MQTT client will handle reconnection automatically
 		// We just need to wait and log the attempts
 		if app.mqttClient.IsConnected() {
@@ -335,6 +340,19 @@ func (app *App) initializeDeviceStatus() {
 	}
 }
 
+func (app *App) subscribeToAllMessages() {
+	// Subscribe to all topics with wildcard
+	token := app.mqttClient.Subscribe("#", 0, func(client mqtt.Client, msg mqtt.Message) {
+		app.addMQTTLogEntry(msg.Topic(), string(msg.Payload()))
+	})
+
+	if token.Wait() && token.Error() != nil {
+		log.Printf("Failed to subscribe to wildcard topic: %v", token.Error())
+	} else {
+		log.Printf("Subscribed to wildcard topic for MQTT logging")
+	}
+}
+
 func (app *App) subscribeToStatusTopics() {
 	for _, device := range app.config.Devices {
 		if device.StatusTopic != "" {
@@ -342,6 +360,9 @@ func (app *App) subscribeToStatusTopics() {
 			deviceID := device.ID
 
 			token := app.mqttClient.Subscribe(topic, 1, func(client mqtt.Client, msg mqtt.Message) {
+				// Add MQTT logging here
+				app.addMQTTLogEntry(msg.Topic(), string(msg.Payload()))
+				// Handle the status update
 				app.handleStatusUpdate(deviceID, msg.Topic(), string(msg.Payload()))
 			})
 
@@ -357,7 +378,7 @@ func (app *App) subscribeToStatusTopics() {
 func (app *App) onMQTTMessage(client mqtt.Client, msg mqtt.Message) {
 	topic := msg.Topic()
 	payload := string(msg.Payload())
-	
+
 	log.Printf("Received MQTT message on topic %s: %s", topic, payload)
 	app.addMQTTLogEntry(topic, payload)
 }
@@ -492,6 +513,17 @@ func (app *App) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 	app.statusMutex.RUnlock()
 
+	// Send initial MQTT log to new client
+	app.mqttLogMutex.RLock()
+	for _, entry := range app.mqttLog {
+		message := WebSocketMessage{
+			Type: "mqtt_log",
+			Data: entry,
+		}
+		conn.WriteJSON(message)
+	}
+	app.mqttLogMutex.RUnlock()
+
 	// Keep connection alive
 	for {
 		_, _, err := conn.ReadMessage()
@@ -539,6 +571,9 @@ func (app *App) handleControl(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		log.Printf("Sent MQTT command - Topic: %s, Payload: %s", req.Topic, req.Payload)
+
+		// Log the outgoing message
+		app.addMQTTLogEntry(req.Topic+" (OUT)", req.Payload)
 	}
 
 	w.WriteHeader(http.StatusOK)

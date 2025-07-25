@@ -17,6 +17,31 @@ class HomeAutomation {
         this.setupToasts();
         this.setupLoadChart();
         this.startSystemStatsPolling();
+        this.loadInitialMqttLog();
+    }
+
+    async loadInitialMqttLog() {
+        try {
+            const response = await fetch('/api/mqtt-log');
+            const logEntries = await response.json();
+            
+            // Clear the placeholder
+            const logContainer = document.getElementById('mqtt-log');
+            if (logContainer) {
+                logContainer.innerHTML = '';
+                
+                // Add existing log entries (they come in reverse chronological order)
+                logEntries.forEach(entry => {
+                    this.addMqttLogEntry(entry, false); // false = don't scroll to top
+                });
+                
+                if (logEntries.length === 0) {
+                    logContainer.innerHTML = '<div class="text-muted">MQTT messages will appear here...</div>';
+                }
+            }
+        } catch (error) {
+            console.error('Failed to load initial MQTT log:', error);
+        }
     }
 
     setupLoadChart() {
@@ -215,7 +240,7 @@ class HomeAutomation {
         });
     }
 
-    addMqttLogEntry(logEntry) {
+    addMqttLogEntry(logEntry, scrollToTop = true) {
         const logContainer = document.getElementById('mqtt-log');
         if (!logContainer) return;
 
@@ -228,25 +253,50 @@ class HomeAutomation {
         // Create new log entry
         const logLine = document.createElement('div');
         logLine.className = 'mqtt-log-entry mb-1';
+        
+        // Determine if this is an outgoing message
+        const isOutgoing = logEntry.topic.includes('(OUT)');
+        const topicClass = isOutgoing ? 'text-info' : 'text-warning';
+        const topicText = isOutgoing ? logEntry.topic.replace(' (OUT)', '') : logEntry.topic;
+        const direction = isOutgoing ? '→' : '←';
+        
         logLine.innerHTML = `
-            <span class="text-info">[${logEntry.timestamp}]</span>
-            <span class="text-warning">${logEntry.topic}</span>
-            <span class="text-light">: ${logEntry.payload}</span>
+            <span class="text-secondary">[${logEntry.timestamp}]</span>
+            <span class="text-muted">${direction}</span>
+            <span class="${topicClass}">${topicText}</span>
+            <span class="text-light">: ${this.formatPayload(logEntry.payload)}</span>
         `;
 
-        // Add to top of log
-        logContainer.insertBefore(logLine, logContainer.firstChild);
+        // Add to top of log for new messages, or to bottom for initial load
+        if (scrollToTop) {
+            logContainer.insertBefore(logLine, logContainer.firstChild);
+        } else {
+            logContainer.appendChild(logLine);
+        }
 
         // Keep only the latest entries (limit handled by server, but cleanup any extras)
         const entries = logContainer.querySelectorAll('.mqtt-log-entry');
-        if (entries.length > 25) { // Keep a few extra in case of timing
+        if (entries.length > 25) {
             for (let i = 25; i < entries.length; i++) {
                 entries[i].remove();
             }
         }
 
-        // Auto-scroll to top to show newest messages
-        logContainer.scrollTop = 0;
+        // Auto-scroll to top to show newest messages (only for new messages)
+        if (scrollToTop) {
+            logContainer.scrollTop = 0;
+        }
+    }
+
+    formatPayload(payload) {
+        try {
+            // Try to parse and pretty-print JSON
+            const parsed = JSON.parse(payload);
+            return JSON.stringify(parsed, null, 0);
+        } catch (e) {
+            // Return as-is if not JSON
+            return payload;
+        }
     }
 }
 
