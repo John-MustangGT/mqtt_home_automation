@@ -30,6 +30,7 @@ type Config struct {
 	Devices           []Device   `xml:"devices>device"`
 	Categories        []Category `xml:"categories>category"`
 	SuppressTimestamp bool       `xml:"suppressTimestamp,attr"`
+	MQTTLogSize       int        `xml:"mqttLogSize,attr"`
 }
 
 type MQTTConfig struct {
@@ -64,6 +65,12 @@ type Category struct {
 	ID   string `xml:"id,attr"`
 	Name string `xml:"name,attr"`
 	Icon string `xml:"icon,attr"`
+}
+
+type MQTTLogEntry struct {
+	Timestamp string `json:"timestamp"`
+	Topic     string `json:"topic"`
+	Payload   string `json:"payload"`
 }
 
 // Runtime structures
@@ -101,12 +108,16 @@ type App struct {
 	wsMutex      sync.RWMutex
 	wsUpgrader   websocket.Upgrader
 	templates    *template.Template
+	webDir       string
+	mqttLog      []MQTTLogEntry
+	mqttLogMutex sync.RWMutex
 }
 
 func main() {
 	// Parse command line flags
 	configFile := flag.String("config", "config.xml", "Path to configuration file")
 	suppressTimestamp := flag.Bool("no-timestamp", false, "Suppress timestamps in log output")
+	webDir := flag.String("webdir", ".", "Parent directory containing 'static' and 'templates' subdirectories")
 	flag.Parse()
 
 	app := &App{
@@ -115,6 +126,7 @@ func main() {
 		wsUpgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
+		webDir: *webDir,
 	}
 
 	// Load configuration
@@ -155,10 +167,14 @@ func main() {
 	http.HandleFunc("/api/control", app.handleControl)
 	http.HandleFunc("/api/status", app.handleStatus)
 	http.HandleFunc("/api/system-stats", app.handleSystemStats)
+	http.HandleFunc("/api/mqtt-log", app.handleMQTTLog)
 
 	// Serve static files
-	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("./static/"))))
+	staticDir := filepath.Join(app.webDir, "static")
+	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir(staticDir))))
 
+	log.Printf("Using web directory: %s", app.webDir)
+	log.Printf("Static files served from: %s", staticDir)
 	log.Println("Starting server on :8080")
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
@@ -171,6 +187,11 @@ func (app *App) loadConfig(filename string) error {
 
 	if err := xml.Unmarshal(data, &app.config); err != nil {
 		return fmt.Errorf("failed to parse XML config: %v", err)
+	}
+
+	// Set default MQTT log size if not specified
+	if app.config.MQTTLogSize <= 0 {
+		app.config.MQTTLogSize = 20
 	}
 
 	// Debug: Print parsed configuration
@@ -225,13 +246,15 @@ func (app *App) loadTemplates() error {
 	}
 
 	// Parse all HTML templates from the templates directory
-	templatePattern := filepath.Join("templates", "*.html")
+	templateDir := filepath.Join(app.webDir, "templates")
+	templatePattern := filepath.Join(templateDir, "*.html")
 	app.templates, err = template.New("").Funcs(funcMap).ParseGlob(templatePattern)
 	if err != nil {
-		return fmt.Errorf("failed to parse templates: %v", err)
+		return fmt.Errorf("failed to parse templates from '%s': %v", templateDir, err)
 	}
 
-	log.Printf("Loaded templates: %v", app.templates.DefinedTemplates())
+	log.Printf("Loaded templates from: %s", templateDir)
+	log.Printf("Available templates: %v", app.templates.DefinedTemplates())
 	return nil
 }
 
@@ -332,7 +355,11 @@ func (app *App) subscribeToStatusTopics() {
 }
 
 func (app *App) onMQTTMessage(client mqtt.Client, msg mqtt.Message) {
-	log.Printf("Received MQTT message on topic %s: %s", msg.Topic(), string(msg.Payload()))
+	topic := msg.Topic()
+	payload := string(msg.Payload())
+	
+	log.Printf("Received MQTT message on topic %s: %s", topic, payload)
+	app.addMQTTLogEntry(topic, payload)
 }
 
 func (app *App) handleStatusUpdate(deviceID, topic, payload string) {
@@ -368,6 +395,51 @@ func (app *App) broadcastUpdate(deviceID string, status map[string]interface{}) 
 	for client := range app.wsClients {
 		if err := client.WriteJSON(message); err != nil {
 			log.Printf("Error sending WebSocket message: %v", err)
+			client.Close()
+			delete(app.wsClients, client)
+		}
+	}
+}
+
+func (app *App) addMQTTLogEntry(topic, payload string) {
+	app.mqttLogMutex.Lock()
+	defer app.mqttLogMutex.Unlock()
+
+	// Create new log entry
+	entry := MQTTLogEntry{
+		Timestamp: time.Now().Format("15:04:05"),
+		Topic:     topic,
+		Payload:   payload,
+	}
+
+	// Add to beginning of slice
+	app.mqttLog = append([]MQTTLogEntry{entry}, app.mqttLog...)
+
+	// Trim to max size
+	maxSize := app.config.MQTTLogSize
+	if maxSize <= 0 {
+		maxSize = 20 // default
+	}
+	if len(app.mqttLog) > maxSize {
+		app.mqttLog = app.mqttLog[:maxSize]
+	}
+
+	// Broadcast to WebSocket clients
+	app.broadcastMQTTLog(entry)
+}
+
+func (app *App) broadcastMQTTLog(entry MQTTLogEntry) {
+	app.wsMutex.RLock()
+	defer app.wsMutex.RUnlock()
+
+	message := WebSocketMessage{
+		Type: "mqtt_log",
+		Data: entry,
+	}
+
+	for client := range app.wsClients {
+		if err := client.WriteJSON(message); err != nil {
+			log.Printf("Error sending MQTT log WebSocket message: %v", err)
 			client.Close()
 			delete(app.wsClients, client)
 		}
@@ -491,6 +563,14 @@ func (app *App) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(app.deviceStatus)
+}
+
+func (app *App) handleMQTTLog(w http.ResponseWriter, r *http.Request) {
+	app.mqttLogMutex.RLock()
+	defer app.mqttLogMutex.RUnlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(app.mqttLog)
 }
 
 func (app *App) handleSystemStats(w http.ResponseWriter, r *http.Request) {
