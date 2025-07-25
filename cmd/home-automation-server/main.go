@@ -101,14 +101,12 @@ type App struct {
 	wsMutex      sync.RWMutex
 	wsUpgrader   websocket.Upgrader
 	templates    *template.Template
-	webDir       string
 }
 
 func main() {
 	// Parse command line flags
 	configFile := flag.String("config", "config.xml", "Path to configuration file")
 	suppressTimestamp := flag.Bool("no-timestamp", false, "Suppress timestamps in log output")
-	webDir := flag.String("webdir", ".", "Parent directory containing 'static' and 'templates' subdirectories")
 	flag.Parse()
 
 	app := &App{
@@ -117,7 +115,6 @@ func main() {
 		wsUpgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
-		webDir: *webDir,
 	}
 
 	// Load configuration
@@ -160,11 +157,8 @@ func main() {
 	http.HandleFunc("/api/system-stats", app.handleSystemStats)
 
 	// Serve static files
-	staticDir := filepath.Join(app.webDir, "static")
-	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir(staticDir))))
+	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("./static/"))))
 
-	log.Printf("Using web directory: %s", app.webDir)
-	log.Printf("Static files served from: %s", staticDir)
 	log.Println("Starting server on :8080")
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
@@ -231,15 +225,13 @@ func (app *App) loadTemplates() error {
 	}
 
 	// Parse all HTML templates from the templates directory
-	templateDir := filepath.Join(app.webDir, "templates")
-	templatePattern := filepath.Join(templateDir, "*.html")
+	templatePattern := filepath.Join("templates", "*.html")
 	app.templates, err = template.New("").Funcs(funcMap).ParseGlob(templatePattern)
 	if err != nil {
-		return fmt.Errorf("failed to parse templates from '%s': %v", templateDir, err)
+		return fmt.Errorf("failed to parse templates: %v", err)
 	}
 
-	log.Printf("Loaded templates from: %s", templateDir)
-	log.Printf("Available templates: %v", app.templates.DefinedTemplates())
+	log.Printf("Loaded templates: %v", app.templates.DefinedTemplates())
 	return nil
 }
 

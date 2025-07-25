@@ -131,6 +131,8 @@ class HomeAutomation {
             const message = JSON.parse(event.data);
             if (message.type === 'status_update') {
                 this.updateDeviceStatus(message.deviceId, message.data);
+            } else if (message.type === 'mqtt_log') {
+                this.addMqttLogEntry(message.data);
             }
         };
 
@@ -149,9 +151,9 @@ class HomeAutomation {
     }
 
     updateDeviceStatus(deviceId, status) {
-        const statusElement = document.getElementById('status-' + deviceId);
-        if (!statusElement) return;
-
+        // Update all instances of this device status across all tabs
+        const statusElements = document.querySelectorAll(`[id^="status-${deviceId}"]`);
+        
         let statusText = 'Online';
         let badgeClass = 'bg-success';
         let iconClass = 'bi-circle-fill text-success';
@@ -165,7 +167,11 @@ class HomeAutomation {
             statusText += ' (' + time + ')';
         }
 
-        statusElement.innerHTML = `<span class="badge ${badgeClass}"><i class="bi ${iconClass}"></i> ${statusText}</span>`;
+        const statusHtml = `<span class="badge ${badgeClass}"><i class="bi ${iconClass}"></i> ${statusText}</span>`;
+        
+        statusElements.forEach(element => {
+            element.innerHTML = statusHtml;
+        });
     }
 
     setupToasts() {
@@ -207,6 +213,40 @@ class HomeAutomation {
         toastElement.addEventListener('hidden.bs.toast', () => {
             toastElement.remove();
         });
+    }
+
+    addMqttLogEntry(logEntry) {
+        const logContainer = document.getElementById('mqtt-log');
+        if (!logContainer) return;
+
+        // Remove the placeholder text if it exists
+        const placeholder = logContainer.querySelector('.text-muted');
+        if (placeholder) {
+            placeholder.remove();
+        }
+
+        // Create new log entry
+        const logLine = document.createElement('div');
+        logLine.className = 'mqtt-log-entry mb-1';
+        logLine.innerHTML = `
+            <span class="text-info">[${logEntry.timestamp}]</span>
+            <span class="text-warning">${logEntry.topic}</span>
+            <span class="text-light">: ${logEntry.payload}</span>
+        `;
+
+        // Add to top of log
+        logContainer.insertBefore(logLine, logContainer.firstChild);
+
+        // Keep only the latest entries (limit handled by server, but cleanup any extras)
+        const entries = logContainer.querySelectorAll('.mqtt-log-entry');
+        if (entries.length > 25) { // Keep a few extra in case of timing
+            for (let i = 25; i < entries.length; i++) {
+                entries[i].remove();
+            }
+        }
+
+        // Auto-scroll to top to show newest messages
+        logContainer.scrollTop = 0;
     }
 }
 
@@ -252,44 +292,52 @@ async function sendSliderCommand(deviceId, topic, label, value) {
     await sendCommand(deviceId, topic, payload, '');
 }
 
-function updateSliderValue(deviceId, label, value) {
-    document.getElementById(`slider-${deviceId}-${label}`).textContent = value;
+function updateSliderValue(deviceId, label, value, context = '') {
+    // Update the specific slider value display
+    const suffix = context ? `-${context}` : '';
+    const element = document.getElementById(`slider-${deviceId}-${label}${suffix}`);
+    if (element) {
+        element.textContent = value;
+    }
+    
+    // Update all instances across tabs if no specific context
+    if (!context) {
+        // Update the "all" tab
+        updateSliderValue(deviceId, label, value, 'all');
+        
+        // Update category-specific tabs (this would need to be dynamically determined)
+        const allElements = document.querySelectorAll(`[id^="slider-${deviceId}-${label}-"]`);
+        allElements.forEach(el => {
+            el.textContent = value;
+        });
+    }
 }
 
 async function toggleCommand(deviceId, topic, payload, localCommand, button) {
     const isActive = button.classList.contains('active');
     
-    if (isActive) {
-        button.classList.remove('active');
-        button.innerHTML = '<i class="bi bi-toggle-off"></i> ' + button.textContent.trim();
-    } else {
-        button.classList.add('active');
-        button.innerHTML = '<i class="bi bi-toggle-on"></i> ' + button.textContent.trim();
-    }
+    // Update all instances of this toggle button across tabs
+    const allToggleButtons = document.querySelectorAll(`[id^="toggle-${deviceId}-${button.id.split('-')[2]}"]`);
+    
+    allToggleButtons.forEach(btn => {
+        if (isActive) {
+            btn.classList.remove('active');
+            btn.innerHTML = '<i class="bi bi-toggle-off"></i> ' + btn.textContent.replace(/.*/, btn.textContent.trim());
+        } else {
+            btn.classList.add('active');
+            btn.innerHTML = '<i class="bi bi-toggle-on"></i> ' + btn.textContent.replace(/.*/, btn.textContent.trim());
+        }
+    });
     
     await sendCommand(deviceId, topic, payload, localCommand);
 }
 
-function filterCategory(categoryId) {
-    const devices = document.querySelectorAll('.device-card');
-    const buttons = document.querySelectorAll('[data-category]');
-    
-    // Update button states
-    buttons.forEach(btn => {
-        btn.classList.remove('active');
-        if (btn.dataset.category === categoryId) {
-            btn.classList.add('active');
-        }
-    });
-    
-    // Show/hide devices
-    devices.forEach(device => {
-        if (categoryId === 'all' || device.dataset.category === categoryId) {
-            device.style.display = 'block';
-        } else {
-            device.style.display = 'none';
-        }
-    });
+function clearMqttLog() {
+    const logContainer = document.getElementById('mqtt-log');
+    if (logContainer) {
+        logContainer.innerHTML = '<div class="text-muted">MQTT messages will appear here...</div>';
+        app.showToast('MQTT log cleared', 'info');
+    }
 }
 
 // Initialize the application
