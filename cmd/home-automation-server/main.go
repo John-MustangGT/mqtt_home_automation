@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"encoding/xml"
+	"flag"
 	"fmt"
 	"html/template"
 	"io/ioutil"
@@ -24,18 +25,21 @@ import (
 
 // Configuration structures
 type Config struct {
-	XMLName    xml.Name   `xml:"config"`
-	MQTT       MQTTConfig `xml:"mqtt"`
-	Devices    []Device   `xml:"devices>device"`
-	Categories []Category `xml:"categories>category"`
+	XMLName           xml.Name   `xml:"config"`
+	MQTT              MQTTConfig `xml:"mqtt"`
+	Devices           []Device   `xml:"devices>device"`
+	Categories        []Category `xml:"categories>category"`
+	SuppressTimestamp bool       `xml:"suppressTimestamp,attr"`
 }
 
 type MQTTConfig struct {
-	Broker   string `xml:"broker,attr"`
-	Port     int    `xml:"port,attr"`
-	Username string `xml:"username,attr"`
-	Password string `xml:"password,attr"`
-	ClientID string `xml:"clientId,attr"`
+	Broker        string `xml:"broker,attr"`
+	Port          int    `xml:"port,attr"`
+	Username      string `xml:"username,attr"`
+	Password      string `xml:"password,attr"`
+	ClientID      string `xml:"clientId,attr"`
+	RetryInterval int    `xml:"retryInterval,attr"` // seconds between connection attempts
+	MaxRetries    int    `xml:"maxRetries,attr"`    // 0 = infinite retries
 }
 
 type Device struct {
@@ -97,25 +101,44 @@ type App struct {
 	wsMutex      sync.RWMutex
 	wsUpgrader   websocket.Upgrader
 	templates    *template.Template
+	webDir       string
 }
 
 func main() {
+	// Parse command line flags
+	configFile := flag.String("config", "config.xml", "Path to configuration file")
+	suppressTimestamp := flag.Bool("no-timestamp", false, "Suppress timestamps in log output")
+	webDir := flag.String("webdir", ".", "Parent directory containing 'static' and 'templates' subdirectories")
+	flag.Parse()
+
 	app := &App{
 		deviceStatus: make(map[string]*DeviceStatus),
 		wsClients:    make(map[*websocket.Conn]bool),
 		wsUpgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool { return true },
 		},
+		webDir: *webDir,
 	}
 
 	// Load configuration
-	if err := app.loadConfig("config.xml"); err != nil {
-		log.Fatal("Failed to load config:", err)
+	if err := app.loadConfig(*configFile); err != nil {
+		log.Fatalf("Failed to load config from '%s': %v", *configFile, err)
 	}
 
-	// Connect to MQTT
-	if err := app.connectMQTT(); err != nil {
-		log.Fatal("Failed to connect to MQTT:", err)
+	// Configure logging based on command line flag or XML config
+	if *suppressTimestamp || app.config.SuppressTimestamp {
+		log.SetFlags(0) // Remove all flags including timestamp
+	}
+
+	// Set default MQTT retry values if not specified
+	if app.config.MQTT.RetryInterval == 0 {
+		app.config.MQTT.RetryInterval = 5 // default 5 seconds
+	}
+	// MaxRetries of 0 means infinite retries (default behavior)
+
+	// Connect to MQTT with retry logic
+	if err := app.connectMQTTWithRetry(); err != nil {
+		log.Fatal("Failed to connect to MQTT after all retries:", err)
 	}
 
 	// Load HTML templates
@@ -137,8 +160,11 @@ func main() {
 	http.HandleFunc("/api/system-stats", app.handleSystemStats)
 
 	// Serve static files
-	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("./static/"))))
+	staticDir := filepath.Join(app.webDir, "static")
+	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir(staticDir))))
 
+	log.Printf("Using web directory: %s", app.webDir)
+	log.Printf("Static files served from: %s", staticDir)
 	log.Println("Starting server on :8080")
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
@@ -146,14 +172,15 @@ func main() {
 func (app *App) loadConfig(filename string) error {
 	data, err := ioutil.ReadFile(filename)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to read config file '%s': %v", filename, err)
 	}
 
 	if err := xml.Unmarshal(data, &app.config); err != nil {
-		return err
+		return fmt.Errorf("failed to parse XML config: %v", err)
 	}
 
 	// Debug: Print parsed configuration
+	log.Printf("Loaded configuration from: %s", filename)
 	log.Printf("Loaded %d devices", len(app.config.Devices))
 	for _, device := range app.config.Devices {
 		log.Printf("Device: %s (%s)", device.Name, device.ID)
@@ -164,6 +191,29 @@ func (app *App) loadConfig(filename string) error {
 	}
 
 	return nil
+}
+
+func (app *App) connectMQTTWithRetry() error {
+	retryCount := 0
+	
+	for {
+		err := app.connectMQTT()
+		if err == nil {
+			return nil // Success
+		}
+
+		retryCount++
+		
+		// Check if we've exceeded max retries (0 means infinite)
+		if app.config.MQTT.MaxRetries > 0 && retryCount >= app.config.MQTT.MaxRetries {
+			return fmt.Errorf("failed to connect to MQTT after %d attempts: %v", retryCount, err)
+		}
+
+		log.Printf("Failed to connect to MQTT (attempt %d): %v", retryCount, err)
+		log.Printf("Waiting %d seconds before retry...", app.config.MQTT.RetryInterval)
+		
+		time.Sleep(time.Duration(app.config.MQTT.RetryInterval) * time.Second)
+	}
 }
 
 func (app *App) loadTemplates() error {
@@ -181,13 +231,15 @@ func (app *App) loadTemplates() error {
 	}
 
 	// Parse all HTML templates from the templates directory
-	templatePattern := filepath.Join("templates", "*.html")
+	templateDir := filepath.Join(app.webDir, "templates")
+	templatePattern := filepath.Join(templateDir, "*.html")
 	app.templates, err = template.New("").Funcs(funcMap).ParseGlob(templatePattern)
 	if err != nil {
-		return fmt.Errorf("failed to parse templates: %v", err)
+		return fmt.Errorf("failed to parse templates from '%s': %v", templateDir, err)
 	}
 
-	log.Printf("Loaded templates: %v", app.templates.DefinedTemplates())
+	log.Printf("Loaded templates from: %s", templateDir)
+	log.Printf("Available templates: %v", app.templates.DefinedTemplates())
 	return nil
 }
 
@@ -199,26 +251,58 @@ func (app *App) connectMQTT() error {
 	opts.SetUsername(app.config.MQTT.Username)
 	opts.SetPassword(app.config.MQTT.Password)
 
+	// Set connection timeout
+	opts.SetConnectTimeout(10 * time.Second)
+	opts.SetKeepAlive(30 * time.Second)
+	opts.SetPingTimeout(5 * time.Second)
+
 	// Set message callback
 	opts.SetDefaultPublishHandler(app.onMQTTMessage)
 
-	// Connection lost callback
+	// Connection lost callback with reconnection logic
 	opts.SetConnectionLostHandler(func(client mqtt.Client, err error) {
 		log.Printf("MQTT connection lost: %v", err)
+		log.Println("Attempting to reconnect to MQTT broker...")
+		go app.reconnectMQTT()
 	})
 
 	// On connect callback
 	opts.SetOnConnectHandler(func(client mqtt.Client) {
 		log.Println("Connected to MQTT broker")
+		// Resubscribe to status topics after reconnection
+		app.subscribeToStatusTopics()
 	})
+
+	// Enable automatic reconnection
+	opts.SetAutoReconnect(true)
+	opts.SetMaxReconnectInterval(time.Duration(app.config.MQTT.RetryInterval) * time.Second)
 
 	app.mqttClient = mqtt.NewClient(opts)
 
+	log.Printf("Attempting to connect to MQTT broker at %s...", broker)
 	if token := app.mqttClient.Connect(); token.Wait() && token.Error() != nil {
 		return token.Error()
 	}
 
 	return nil
+}
+
+func (app *App) reconnectMQTT() {
+	retryCount := 0
+	
+	for !app.mqttClient.IsConnected() {
+		retryCount++
+		log.Printf("MQTT reconnection attempt %d...", retryCount)
+		
+		time.Sleep(time.Duration(app.config.MQTT.RetryInterval) * time.Second)
+		
+		// The MQTT client will handle reconnection automatically
+		// We just need to wait and log the attempts
+		if app.mqttClient.IsConnected() {
+			log.Println("MQTT reconnection successful")
+			return
+		}
+	}
 }
 
 func (app *App) initializeDeviceStatus() {
