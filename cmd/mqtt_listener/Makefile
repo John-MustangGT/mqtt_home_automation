@@ -8,3 +8,12 @@ install:
 
 clean:
 	rm -f $(BINNAME)
+
+# Example targets for testing
+test-xml: build
+	./$(BINNAME) -L mqtt://localhost/host1 --config commands.xml
+
+test-legacy: build
+	./$(BINNAME) -L mqtt://localhost/host1 --cmd "ping -c 4 1.1.1.1"
+
+.PHONY: build install clean test-xml test-legacy

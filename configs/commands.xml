@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<commands>
+    <command name="ping_google" description="Ping Google DNS">ping -c 4 8.8.8.8</command>
+    <command name="ping_cloudflare" description="Ping Cloudflare DNS">ping -c 4 1.1.1.1</command>
+    <command name="disk_usage" description="Check disk usage">df -h</command>
+    <command name="memory_info" description="Show memory information">free -h</command>
+    <command name="uptime" description="Show system uptime">uptime</command>
+    <command name="cpu_info" description="Show CPU information">lscpu</command>
+    <command name="network_interfaces" description="Show network interfaces">ip addr show</command>
+    <command name="process_list" description="Show running processes">ps aux</command>
+    <command name="system_load" description="Show system load">cat /proc/loadavg</command>
+    <command name="date_time" description="Show current date and time">date</command>
+</commands>
