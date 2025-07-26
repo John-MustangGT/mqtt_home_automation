@@ -1,10 +1,10 @@
 BINNAME = $(shell basename ${PWD})
 
-build:
-	go build -o $(BINNAME) main.go
+build: *.go
+	go build -o $(BINNAME) .
 
-install:
-	go install main.go
+install: *.go
+	go install .
 
 clean:
 	rm -f $(BINNAME)
