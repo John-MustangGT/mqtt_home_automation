@@ -10,8 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	uuid "github.com/google/uuid"
 )
 
 func (app *App) loadTemplates() error {
@@ -65,13 +63,11 @@ func (app *App) handleIndex(w http.ResponseWriter, r *http.Request) {
 		Categories []Category
 		Devices    []Device
 		Title      string
-		ID         string
 	}{
 		Config:     app.config,
 		Categories: app.config.Categories,
 		Devices:    app.config.Devices,
 		Title:      "Home Automation Control",
-		ID:         uuid.NewString(),
 	}
 
 	if err := app.templates.ExecuteTemplate(w, "index.html", data); err != nil {
@@ -185,12 +181,16 @@ func (app *App) handleControl(w http.ResponseWriter, r *http.Request) {
 	var device *Device
 	var control *Control
 	
-	for _, d := range app.config.Devices {
-		if d.ID == req.Device {
-			device = &d
-			for _, c := range d.Controls {
-				if c.Type == req.ControlType || (req.Topic != "" && c.Topic == req.Topic) {
-					control = &c
+	for i := range app.config.Devices {
+		if app.config.Devices[i].ID == req.Device {
+			device = &app.config.Devices[i]
+			// Look for matching control
+			for j := range app.config.Devices[i].Controls {
+				c := &app.config.Devices[i].Controls[j]
+				// Match by control type or topic
+				if (req.ControlType != "" && c.Type == req.ControlType) || 
+				   (req.Topic != "" && c.Topic == req.Topic) {
+					control = c
 					break
 				}
 			}
@@ -199,6 +199,7 @@ func (app *App) handleControl(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if device == nil {
+		log.Printf("Device not found: %s", req.Device)
 		http.Error(w, "Device not found", http.StatusNotFound)
 		return
 	}

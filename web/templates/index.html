@@ -37,6 +37,12 @@
     </nav>
 
     <div class="container mt-4">
+        <!-- Debug Info (remove in production) -->
+        <script>
+            // Debug: Log device configuration
+            console.log('Device Configuration:', [{{range .Devices}}{id: '{{.ID}}', name: '{{.Name}}'},{{end}}]);
+        </script>
+
         <!-- Bootstrap Tabs -->
         <ul class="nav nav-tabs" id="mainTabs" role="tablist">
             <!-- System Tab -->
@@ -150,7 +156,7 @@
                                         <tbody id="device-health-table">
                                             {{range .Devices}}
                                             <tr>
-                                                <td><strong>{{.Name}}</strong></td>
+                                                <td><strong>{{.Name}}</strong> <small class="text-muted">({{.ID}})</small></td>
                                                 <td><span class="badge bg-secondary">{{.Category}}</span></td>
                                                 <td id="table-health-{{.ID}}">
                                                     <i class="bi bi-question-circle text-warning"></i> Unknown
@@ -188,12 +194,13 @@
             <div class="tab-pane fade" id="all-pane" role="tabpanel" aria-labelledby="all-tab">
                 <div class="row" id="all-devices">
                     {{range .Devices}}
-                    <div class="col-xl-3 col-lg-4 col-md-6 col-sm-12 mb-4 device-card">
+                    <div class="col-xl-3 col-lg-4 col-md-6 col-sm-12 mb-4 device-card" data-device-id="{{.ID}}">
                         <div class="card h-100 shadow-sm">
                             <div class="card-header bg-white border-bottom">
                                 <div class="d-flex justify-content-between align-items-start">
                                     <div>
                                         <h6 class="card-title mb-1 fw-bold">{{.Name}}</h6>
+                                        <small class="text-muted">ID: {{.ID}}</small>
                                         <div class="device-status" id="status-{{.ID}}-all">
                                             <span class="badge bg-secondary">
                                                 <i class="bi bi-circle-fill text-warning"></i> Unknown
@@ -207,25 +214,40 @@
                             </div>
                             <div class="card-body">
                                 <div class="d-grid gap-2">
+                                    {{$deviceID := .ID}}
                                     {{range .Controls}}
                                     {{if eq .Type "button"}}
-                                    <button class="btn btn-success btn-sm" onclick="sendCommand('{{$.ID}}', '{{.Topic | safeAttr}}', '{{.Payload | safeAttr}}', '{{.LocalCommand | safeAttr}}', 'button')">
+                                    <button class="btn btn-success btn-sm" 
+                                            data-device-id="{{$deviceID}}"
+                                            data-topic="{{.Topic}}"
+                                            data-payload="{{.Payload}}"
+                                            data-local-command="{{.LocalCommand}}"
+                                            onclick="sendCommandFromButton(this, 'button')">
                                         <i class="bi bi-power"></i> {{.Label}}
                                     </button>
                                     {{else if eq .Type "slider"}}
                                     <div class="mb-3">
-                                        <label class="form-label small">{{.Label}}: <span id="slider-{{$.ID}}-{{.Label}}-all">{{.Min}}</span></label>
-                                        <input type="range" class="form-range" min="{{.Min}}" max="{{.Max}}" value="{{.Min}}"
-                                               oninput="updateSliderValue('{{$.ID}}', '{{.Label}}', this.value, 'all')"
-                                               onchange="sendSliderCommand('{{$.ID}}', '{{.Topic | safeAttr}}', '{{.Label}}', this.value)">
+                                        <label class="form-label small">{{.Label}}: <span id="slider-{{$deviceID}}-{{.Label}}-all">{{.Min}}</span></label>
+                                        <input type="range" class="form-range" 
+                                               min="{{.Min}}" max="{{.Max}}" value="{{.Min}}"
+                                               data-device-id="{{$deviceID}}"
+                                               data-topic="{{.Topic}}"
+                                               data-label="{{.Label}}"
+                                               oninput="updateSliderValue('{{$deviceID}}', '{{.Label}}', this.value, 'all')"
+                                               onchange="sendSliderCommandFromElement(this)">
                                         <div class="d-flex justify-content-between small text-muted">
                                             <span>{{.Min}}</span>
                                             <span>{{.Max}}</span>
                                         </div>
                                     </div>
                                     {{else if eq .Type "toggle"}}
-                                    <button class="btn btn-outline-primary btn-sm toggle-btn" id="toggle-{{$.ID}}-{{.Label}}-all" 
-                                            onclick="toggleCommand('{{$.ID}}', '{{.Topic | safeAttr}}', '{{.Payload | safeAttr}}', '{{.LocalCommand | safeAttr}}', this)">
+                                    <button class="btn btn-outline-primary btn-sm toggle-btn" 
+                                            id="toggle-{{$deviceID}}-{{.Label}}-all"
+                                            data-device-id="{{$deviceID}}"
+                                            data-topic="{{.Topic}}"
+                                            data-payload="{{.Payload}}"
+                                            data-local-command="{{.LocalCommand}}"
+                                            onclick="toggleCommandFromButton(this)">
                                         <i class="bi bi-toggle-off"></i> {{.Label}}
                                     </button>
                                     {{end}}
@@ -245,12 +267,13 @@
                     {{$categoryID := .ID}}
                     {{range $.Devices}}
                     {{if eq .Category $categoryID}}
-                    <div class="col-xl-3 col-lg-4 col-md-6 col-sm-12 mb-4 device-card">
+                    <div class="col-xl-3 col-lg-4 col-md-6 col-sm-12 mb-4 device-card" data-device-id="{{.ID}}">
                         <div class="card h-100 shadow-sm">
                             <div class="card-header bg-white border-bottom">
                                 <div class="d-flex justify-content-between align-items-start">
                                     <div>
                                         <h6 class="card-title mb-1 fw-bold">{{.Name}}</h6>
+                                        <small class="text-muted">ID: {{.ID}}</small>
                                         <div class="device-status" id="status-{{.ID}}-{{$categoryID}}">
                                             <span class="badge bg-secondary">
                                                 <i class="bi bi-circle-fill text-warning"></i> Unknown
@@ -264,25 +287,40 @@
                             </div>
                             <div class="card-body">
                                 <div class="d-grid gap-2">
+                                    {{$deviceID := .ID}}
                                     {{range .Controls}}
                                     {{if eq .Type "button"}}
-                                    <button class="btn btn-success btn-sm" onclick="sendCommand('{{$.ID}}', '{{.Topic | safeAttr}}', '{{.Payload | safeAttr}}', '{{.LocalCommand | safeAttr}}', 'button')">
+                                    <button class="btn btn-success btn-sm"
+                                            data-device-id="{{$deviceID}}"
+                                            data-topic="{{.Topic}}"
+                                            data-payload="{{.Payload}}"
+                                            data-local-command="{{.LocalCommand}}"
+                                            onclick="sendCommandFromButton(this, 'button')">
                                         <i class="bi bi-power"></i> {{.Label}}
                                     </button>
                                     {{else if eq .Type "slider"}}
                                     <div class="mb-3">
-                                        <label class="form-label small">{{.Label}}: <span id="slider-{{$.ID}}-{{.Label}}-{{$categoryID}}">{{.Min}}</span></label>
-                                        <input type="range" class="form-range" min="{{.Min}}" max="{{.Max}}" value="{{.Min}}"
-                                               oninput="updateSliderValue('{{$.ID}}', '{{.Label}}', this.value, '{{$categoryID}}')"
-                                               onchange="sendSliderCommand('{{$.ID}}', '{{.Topic | safeAttr}}', '{{.Label}}', this.value)">
+                                        <label class="form-label small">{{.Label}}: <span id="slider-{{$deviceID}}-{{.Label}}-{{$categoryID}}">{{.Min}}</span></label>
+                                        <input type="range" class="form-range" 
+                                               min="{{.Min}}" max="{{.Max}}" value="{{.Min}}"
+                                               data-device-id="{{$deviceID}}"
+                                               data-topic="{{.Topic}}"
+                                               data-label="{{.Label}}"
+                                               oninput="updateSliderValue('{{$deviceID}}', '{{.Label}}', this.value, '{{$categoryID}}')"
+                                               onchange="sendSliderCommandFromElement(this)">
                                         <div class="d-flex justify-content-between small text-muted">
                                             <span>{{.Min}}</span>
                                             <span>{{.Max}}</span>
                                         </div>
                                     </div>
                                     {{else if eq .Type "toggle"}}
-                                    <button class="btn btn-outline-primary btn-sm toggle-btn" id="toggle-{{$.ID}}-{{.Label}}-{{$categoryID}}" 
-                                            onclick="toggleCommand('{{$.ID}}', '{{.Topic | safeAttr}}', '{{.Payload | safeAttr}}', '{{.LocalCommand | safeAttr}}', this)">
+                                    <button class="btn btn-outline-primary btn-sm toggle-btn" 
+                                            id="toggle-{{$deviceID}}-{{.Label}}-{{$categoryID}}"
+                                            data-device-id="{{$deviceID}}"
+                                            data-topic="{{.Topic}}"
+                                            data-payload="{{.Payload}}"
+                                            data-local-command="{{.LocalCommand}}"
+                                            onclick="toggleCommandFromButton(this)">
                                         <i class="bi bi-toggle-off"></i> {{.Label}}
                                     </button>
                                     {{end}}
@@ -335,5 +373,28 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <!-- Custom JavaScript -->
     <script src="/static/js/app.js"></script>
+
+    <!-- Additional debugging script -->
+    <script>
+        // Debug function to validate device IDs
+        function validateDeviceId(deviceId) {
+            console.log('Validating device ID:', deviceId, 'Type:', typeof deviceId);
+            
+            // Check if it looks like a UUID (has dashes and is 36 characters)
+            if (typeof deviceId === 'string' && deviceId.length === 36 && deviceId.includes('-')) {
+                console.warn('WARNING: Device ID looks like a UUID, this might be incorrect!');
+                console.warn('Expected device IDs from config:', [{{range .Devices}}'{{.ID}}',{{end}}]);
+            }
+            
+            return deviceId;
+        }
+
+        // Override the sendCommand function to add validation
+        const originalSendCommand = window.sendCommand;
+        window.sendCommand = function(deviceId, topic, payload, localCommand, controlType) {
+            deviceId = validateDeviceId(deviceId);
+            return originalSendCommand.call(this, deviceId, topic, payload, localCommand, controlType);
+        };
+    </script>
 </body>
 </html>
