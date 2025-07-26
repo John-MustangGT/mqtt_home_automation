@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<config suppressTimestamp="false" mqttLogSize="25">
+    <mqtt 
+        broker="localhost" 
+        port="1883" 
+        username="homeautomation" 
+        password="secret123"
+        clientId="home-automation-server"
+        retryInterval="5"
+        maxRetries="0">
+    </mqtt>
+    
+    <categories>
+        <category id="lights" name="Lights" icon="💡"/>
+        <category id="climate" name="Climate" icon="🌡️"/>
+        <category id="security" name="Security" icon="🔒"/>
+    </categories>
+    
+    <devices>
+        <device id="living-room-light" name="Living Room Light" category="lights">
+            <statusTopic>home/living-room/light/status</statusTopic>
+            <controls>
+                <control type="toggle" label="Power" topic="home/living-room/light/set" payload="toggle"/>
+                <control type="slider" label="Brightness" topic="home/living-room/light/brightness" min="0" max="100"/>
+            </controls>
+        </device>
+        
+        <device id="thermostat" name="Main Thermostat" category="climate">
+            <statusTopic>home/thermostat/status</statusTopic>
+            <controls>
+                <control type="slider" label="Temperature" topic="home/thermostat/set" min="60" max="80"/>
+                <control type="button" label="Away Mode" topic="home/thermostat/mode" payload="away"/>
+            </controls>
+        </device>
+        
+        <device id="garage-door" name="Garage Door" category="security">
+            <statusTopic>home/garage/door/status</statusTopic>
+            <controls>
+                <control type="button" label="Toggle" localCommand="gpio-control garage-door"/>
+            </controls>
+        </device>
+    </devices>
+</config>

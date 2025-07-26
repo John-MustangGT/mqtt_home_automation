@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"html/template"
 	"log"
+	"net"
 	"net/http"
 	"path/filepath"
 	"strings"
+	"time"
 
 	uuid "github.com/google/uuid"
 )
@@ -37,6 +39,24 @@ func (app *App) loadTemplates() error {
 	log.Printf("Loaded templates from: %s", templateDir)
 	log.Printf("Available templates: %v", app.templates.DefinedTemplates())
 	return nil
+}
+
+// Rate limiting middleware
+func (app *App) rateLimitMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		clientIP, _, _ := net.SplitHostPort(r.RemoteAddr)
+		if clientIP == "" {
+			clientIP = r.RemoteAddr
+		}
+		
+		// Allow 60 requests per minute per IP
+		if !globalRateLimiter.Allow(clientIP, 60, time.Minute) {
+			http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
+			return
+		}
+		
+		next(w, r)
+	}
 }
 
 func (app *App) handleIndex(w http.ResponseWriter, r *http.Request) {
@@ -82,6 +102,14 @@ func (app *App) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			Data:     status.Status,
 		}
 		conn.WriteJSON(message)
+		
+		// Send health status
+		healthMessage := WebSocketMessage{
+			Type:     "health_update",
+			DeviceID: deviceID,
+			Data:     map[string]interface{}{"status": status.HealthStatus},
+		}
+		conn.WriteJSON(healthMessage)
 	}
 	app.statusMutex.RUnlock()
 
@@ -115,16 +143,78 @@ func (app *App) handleControl(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Device       string `json:"device"`
-		Topic        string `json:"topic"`
-		Payload      string `json:"payload"`
-		LocalCommand string `json:"localCommand"`
+		Device       string      `json:"device"`
+		Topic        string      `json:"topic"`
+		Payload      string      `json:"payload"`
+		LocalCommand string      `json:"localCommand"`
+		Value        interface{} `json:"value"`
+		ControlType  string      `json:"controlType"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
+
+	// Input validation
+	if err := validateDeviceID(req.Device); err != nil {
+		http.Error(w, fmt.Sprintf("Invalid device ID: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	if req.Topic != "" {
+		if err := validateMQTTTopic(req.Topic); err != nil {
+			http.Error(w, fmt.Sprintf("Invalid MQTT topic: %v", err), http.StatusBadRequest)
+			return
+		}
+		
+		if err := validateMQTTPayload(req.Payload); err != nil {
+			http.Error(w, fmt.Sprintf("Invalid MQTT payload: %v", err), http.StatusBadRequest)
+			return
+		}
+	}
+
+	if req.LocalCommand != "" {
+		if err := validateLocalCommand(req.LocalCommand); err != nil {
+			http.Error(w, fmt.Sprintf("Invalid local command: %v", err), http.StatusBadRequest)
+			return
+		}
+	}
+
+	// Find device and control for validation
+	var device *Device
+	var control *Control
+	
+	for _, d := range app.config.Devices {
+		if d.ID == req.Device {
+			device = &d
+			for _, c := range d.Controls {
+				if c.Type == req.ControlType || (req.Topic != "" && c.Topic == req.Topic) {
+					control = &c
+					break
+				}
+			}
+			break
+		}
+	}
+
+	if device == nil {
+		http.Error(w, "Device not found", http.StatusNotFound)
+		return
+	}
+
+	// Validate control value if provided
+	if control != nil && req.Value != nil {
+		if err := validateControlValue(*control, req.Value); err != nil {
+			http.Error(w, fmt.Sprintf("Invalid control value: %v", err), http.StatusBadRequest)
+			return
+		}
+	}
+
+	// Sanitize inputs
+	req.Topic = sanitizeInput(req.Topic)
+	req.Payload = sanitizeInput(req.Payload)
+	req.LocalCommand = sanitizeInput(req.LocalCommand)
 
 	log.Printf("Received control request: Device=%s, Topic=%s, Payload=%s, LocalCommand=%s",
 		req.Device, req.Topic, req.Payload, req.LocalCommand)
@@ -149,6 +239,7 @@ func (app *App) handleControl(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"status": "success"})
 }
 
 func (app *App) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -171,4 +262,89 @@ func (app *App) handleSystemStats(w http.ResponseWriter, r *http.Request) {
 	stats := app.getSystemStats()
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(stats)
+}
+
+func (app *App) handleAutomations(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "GET":
+		// Return automation status
+		status := app.getAutomationStatus()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(status)
+		
+	case "POST":
+		// Enable/disable automation or trigger manual execution
+		var req struct {
+			AutomationID string `json:"automationId"`
+			Action       string `json:"action"` // "enable", "disable", "trigger"
+		}
+		
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid JSON", http.StatusBadRequest)
+			return
+		}
+		
+		// Validate automation ID
+		if req.AutomationID == "" {
+			http.Error(w, "Automation ID required", http.StatusBadRequest)
+			return
+		}
+		
+		// Find automation in config
+		var automation *Automation
+		for _, a := range app.config.Automations {
+			if a.ID == req.AutomationID {
+				automation = &a
+				break
+			}
+		}
+		
+		if automation == nil {
+			http.Error(w, "Automation not found", http.StatusNotFound)
+			return
+		}
+		
+		switch req.Action {
+		case "enable":
+			automation.Enabled = true
+			app.scheduleAutomation(*automation)
+			log.Printf("Enabled automation: %s", automation.Name)
+			
+		case "disable":
+			automation.Enabled = false
+			app.stopAutomation(req.AutomationID)
+			log.Printf("Disabled automation: %s", automation.Name)
+			
+		case "trigger":
+			// Manual trigger
+			if job, exists := app.automationJobs[req.AutomationID]; exists {
+				go app.executeAutomation(job)
+				log.Printf("Manually triggered automation: %s", automation.Name)
+			} else {
+				http.Error(w, "Automation not scheduled", http.StatusBadRequest)
+				return
+			}
+			
+		default:
+			http.Error(w, "Invalid action", http.StatusBadRequest)
+			return
+		}
+		
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"status": "success"})
+		
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (app *App) handleDeviceHealth(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	
+	summary := app.getDeviceHealthSummary()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(summary)
 }

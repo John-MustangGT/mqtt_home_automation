@@ -1,43 +1,171 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<config suppressTimestamp="false" mqttLogSize="25">
-    <mqtt 
-        broker="localhost" 
-        port="1883" 
-        username="homeautomation" 
+<config suppressTimestamp="false" mqttLogSize="50">
+
+    <server 
+        enableTLS="false" 
+        port="8080" 
+	authEnabled="false">
+    </server>
+    <!-- Server Configuration with HTTPS/TLS and Authentication -->
+	<!--
+    <server 
+        enableTLS="true" 
+        certFile="/etc/ssl/certs/home-automation.crt" 
+        keyFile="/etc/ssl/private/home-automation.key"
+        port="8080" 
+        tlsPort="8443"
+        authEnabled="true"
+        username="admin"
+        password="secure123">
+    </server>
+	-->
+
+    <mqtt
+        broker="localhost"
+        port="1883"
+        username="homeautomation"
         password="secret123"
         clientId="home-automation-server"
         retryInterval="5"
         maxRetries="0">
     </mqtt>
+
+    <!-- MQTT Configuration with TLS Support -->
+    <!--
+    <mqtt 
+        broker="localhost" 
+        port="8883" 
+        username="homeautomation" 
+        password="mqtt_secure_password"
+        clientId="home-automation-server"
+        retryInterval="5"
+        maxRetries="10"
+        enableTLS="true"
+        caFile="/etc/ssl/certs/mqtt-ca.crt"
+        certFile="/etc/ssl/certs/mqtt-client.crt"
+        keyFile="/etc/ssl/private/mqtt-client.key"
+        insecureSkipVerify="false">
+    </mqtt>
+    -->
     
     <categories>
         <category id="lights" name="Lights" icon="💡"/>
         <category id="climate" name="Climate" icon="🌡️"/>
         <category id="security" name="Security" icon="🔒"/>
+        <category id="irrigation" name="Garden" icon="🌱"/>
     </categories>
     
     <devices>
+        <!-- Living Room Light with Health Monitoring -->
         <device id="living-room-light" name="Living Room Light" category="lights">
             <statusTopic>home/living-room/light/status</statusTopic>
+            <healthTopic>home/living-room/light/health</healthTopic>
+            <healthInterval>30</healthInterval>
+            <healthTimeout>60</healthTimeout>
             <controls>
-                <control type="toggle" label="Power" topic="home/living-room/light/set" payload="toggle"/>
-                <control type="slider" label="Brightness" topic="home/living-room/light/brightness" min="0" max="100"/>
+                <control type="toggle" label="Power" topic="home/living-room/light/set" payload="toggle" 
+                         allowedValues="on,off,toggle"/>
+                <control type="slider" label="Brightness" topic="home/living-room/light/brightness" 
+                         min="0" max="100" minValue="1" maxValue="100"/>
             </controls>
         </device>
         
+        <!-- Smart Thermostat -->
         <device id="thermostat" name="Main Thermostat" category="climate">
             <statusTopic>home/thermostat/status</statusTopic>
+            <healthTopic>home/thermostat/health</healthTopic>
+            <healthInterval>60</healthInterval>
+            <healthTimeout>120</healthTimeout>
             <controls>
-                <control type="slider" label="Temperature" topic="home/thermostat/set" min="60" max="80"/>
+                <control type="slider" label="Temperature" topic="home/thermostat/set" 
+                         min="60" max="80" minValue="65" maxValue="78"/>
                 <control type="button" label="Away Mode" topic="home/thermostat/mode" payload="away"/>
+                <control type="button" label="Home Mode" topic="home/thermostat/mode" payload="home"/>
             </controls>
         </device>
         
+        <!-- Garage Door with Local Control -->
         <device id="garage-door" name="Garage Door" category="security">
             <statusTopic>home/garage/door/status</statusTopic>
+            <healthTopic>home/garage/door/health</healthTopic>
+            <healthInterval>45</healthInterval>
             <controls>
                 <control type="button" label="Toggle" localCommand="gpio-control garage-door"/>
             </controls>
         </device>
+
+        <!-- Garden Sprinkler System -->
+        <device id="sprinkler-zone1" name="Garden Zone 1" category="irrigation">
+            <statusTopic>home/garden/zone1/status</statusTopic>
+            <healthTopic>home/garden/zone1/health</healthTopic>
+            <healthInterval>120</healthInterval>
+            <controls>
+                <control type="button" label="Start" topic="home/garden/zone1/control" payload="start"/>
+                <control type="button" label="Stop" topic="home/garden/zone1/control" payload="stop"/>
+                <control type="slider" label="Duration" topic="home/garden/zone1/duration" 
+                         min="5" max="60" minValue="5" maxValue="45"/>
+            </controls>
+        </device>
     </devices>
+
+    <!-- Automation Rules -->
+    <automations>
+        <!-- Turn on living room light at sunset -->
+        <automation id="sunset-lights" name="Evening Lights" enabled="true" 
+                   deviceId="living-room-light" controlType="toggle">
+            <schedule type="time" time="18:30" days="mon,tue,wed,thu,fri,sat,sun"/>
+            <action topic="home/living-room/light/set" onPayload="on"/>
+        </automation>
+
+        <!-- Turn off lights at bedtime -->
+        <automation id="bedtime-lights" name="Bedtime Lights Off" enabled="true" 
+                   deviceId="living-room-light" controlType="toggle">
+            <schedule type="time" time="23:00" days="mon,tue,wed,thu,fri,sat,sun"/>
+            <action topic="home/living-room/light/set" onPayload="off"/>
+        </automation>
+
+        <!-- Thermostat away mode during work hours -->
+        <automation id="work-away-mode" name="Work Day Away Mode" enabled="true" 
+                   deviceId="thermostat" controlType="button">
+            <schedule type="time" time="08:00" days="mon,tue,wed,thu,fri"/>
+            <action topic="home/thermostat/mode" onPayload="away"/>
+        </automation>
+
+        <!-- Return thermostat to home mode -->
+        <automation id="work-home-mode" name="Work Day Home Mode" enabled="true" 
+                   deviceId="thermostat" controlType="button">
+            <schedule type="time" time="17:30" days="mon,tue,wed,thu,fri"/>
+            <action topic="home/thermostat/mode" onPayload="home"/>
+        </automation>
+
+        <!-- Garden irrigation - every other day for 20 minutes -->
+        <automation id="garden-irrigation" name="Garden Watering" enabled="true" 
+                   deviceId="sprinkler-zone1" controlType="duration">
+            <schedule type="duration" interval="48h" duration="20m" time="06:00" 
+                     startDate="2025-04-01" endDate="2025-09-30"/>
+            <action topic="home/garden/zone1/control" onPayload="start" offPayload="stop"/>
+        </automation>
+
+        <!-- Security check - garage door status every hour -->
+        <automation id="garage-check" name="Garage Status Check" enabled="true" 
+                   deviceId="garage-door" controlType="button">
+            <schedule type="interval" interval="1h"/>
+            <action localCommand="gpio-control garage-door-status"/>
+        </automation>
+
+        <!-- Weekend morning lights - turn on at 9 AM on weekends -->
+        <automation id="weekend-morning-lights" name="Weekend Morning Lights" enabled="true" 
+                   deviceId="living-room-light" controlType="toggle">
+            <schedule type="time" time="09:00" days="sat,sun"/>
+            <action topic="home/living-room/light/set" onPayload="on"/>
+        </automation>
+
+        <!-- Porch light - on for 30 minutes every 3 hours during night -->
+        <automation id="porch-security-light" name="Porch Security Light" enabled="true" 
+                   deviceId="living-room-light" controlType="duration">
+            <schedule type="duration" interval="3h" duration="30m" 
+                     startDate="2025-01-01"/>
+            <action topic="home/porch/light/set" onPayload="on" offPayload="off"/>
+        </automation>
+    </automations>
 </config>

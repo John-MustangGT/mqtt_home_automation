@@ -1,8 +1,11 @@
 package main
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"time"
 
@@ -34,11 +37,51 @@ func (app *App) connectMQTTWithRetry() error {
 
 func (app *App) connectMQTT() error {
 	opts := mqtt.NewClientOptions()
-	broker := fmt.Sprintf("tcp://%s:%d", app.config.MQTT.Broker, app.config.MQTT.Port)
+	
+	// Determine broker URL based on TLS setting
+	var broker string
+	if app.config.MQTT.EnableTLS {
+		broker = fmt.Sprintf("ssl://%s:%d", app.config.MQTT.Broker, app.config.MQTT.Port)
+	} else {
+		broker = fmt.Sprintf("tcp://%s:%d", app.config.MQTT.Broker, app.config.MQTT.Port)
+	}
+	
 	opts.AddBroker(broker)
 	opts.SetClientID(app.config.MQTT.ClientID)
 	opts.SetUsername(app.config.MQTT.Username)
 	opts.SetPassword(app.config.MQTT.Password)
+
+	// Configure TLS if enabled
+	if app.config.MQTT.EnableTLS {
+		tlsConfig := &tls.Config{
+			InsecureSkipVerify: app.config.MQTT.InsecureSkip,
+		}
+
+		// Load CA certificate if specified
+		if app.config.MQTT.CAFile != "" {
+			caCert, err := ioutil.ReadFile(app.config.MQTT.CAFile)
+			if err != nil {
+				return fmt.Errorf("failed to read CA file: %v", err)
+			}
+			
+			caCertPool := x509.NewCertPool()
+			if !caCertPool.AppendCertsFromPEM(caCert) {
+				return fmt.Errorf("failed to parse CA certificate")
+			}
+			tlsConfig.RootCAs = caCertPool
+		}
+
+		// Load client certificate if specified
+		if app.config.MQTT.CertFile != "" && app.config.MQTT.KeyFile != "" {
+			cert, err := tls.LoadX509KeyPair(app.config.MQTT.CertFile, app.config.MQTT.KeyFile)
+			if err != nil {
+				return fmt.Errorf("failed to load client certificate: %v", err)
+			}
+			tlsConfig.Certificates = []tls.Certificate{cert}
+		}
+
+		opts.SetTLSConfig(tlsConfig)
+	}
 
 	// Set connection timeout
 	opts.SetConnectTimeout(10 * time.Second)
@@ -60,6 +103,7 @@ func (app *App) connectMQTT() error {
 		log.Println("Connected to MQTT broker")
 		// Resubscribe to status topics after reconnection
 		app.subscribeToStatusTopics()
+		app.subscribeToHealthTopics()
 	})
 
 	// Enable automatic reconnection
@@ -100,11 +144,13 @@ func (app *App) initializeDeviceStatus() {
 
 	for _, device := range app.config.Devices {
 		app.deviceStatus[device.ID] = &DeviceStatus{
-			ID:       device.ID,
-			Name:     device.Name,
-			Category: device.Category,
-			Status:   make(map[string]interface{}),
-			Controls: device.Controls,
+			ID:           device.ID,
+			Name:         device.Name,
+			Category:     device.Category,
+			Status:       make(map[string]interface{}),
+			Controls:     device.Controls,
+			LastSeen:     time.Now(),
+			HealthStatus: "unknown",
 		}
 	}
 }
@@ -144,6 +190,26 @@ func (app *App) subscribeToStatusTopics() {
 	}
 }
 
+func (app *App) subscribeToHealthTopics() {
+	for _, device := range app.config.Devices {
+		if device.HealthTopic != "" {
+			topic := device.HealthTopic
+			deviceID := device.ID
+
+			token := app.mqttClient.Subscribe(topic, 1, func(client mqtt.Client, msg mqtt.Message) {
+				app.addMQTTLogEntry(msg.Topic(), string(msg.Payload()))
+				app.handleHealthUpdate(deviceID, msg.Topic(), string(msg.Payload()))
+			})
+
+			if token.Wait() && token.Error() != nil {
+				log.Printf("Failed to subscribe to health topic %s: %v", topic, token.Error())
+			} else {
+				log.Printf("Subscribed to health topic: %s for device: %s", topic, deviceID)
+			}
+		}
+	}
+}
+
 func (app *App) onMQTTMessage(client mqtt.Client, msg mqtt.Message) {
 	topic := msg.Topic()
 	payload := string(msg.Payload())
@@ -157,18 +223,49 @@ func (app *App) handleStatusUpdate(deviceID, topic, payload string) {
 	defer app.statusMutex.Unlock()
 
 	if deviceStatus, exists := app.deviceStatus[deviceID]; exists {
+		// Update last seen time
+		deviceStatus.LastSeen = time.Now()
+		deviceStatus.HealthStatus = "online"
+
 		// Try to parse as JSON, fallback to string
 		var jsonData interface{}
 		if err := json.Unmarshal([]byte(payload), &jsonData); err != nil {
 			deviceStatus.Status["value"] = payload
 		} else {
-			deviceStatus.Status = jsonData.(map[string]interface{})
+			if statusMap, ok := jsonData.(map[string]interface{}); ok {
+				deviceStatus.Status = statusMap
+			} else {
+				deviceStatus.Status["value"] = jsonData
+			}
 		}
 
 		deviceStatus.Status["lastUpdate"] = time.Now().Format(time.RFC3339)
 
 		// Broadcast update to WebSocket clients
 		app.broadcastUpdate(deviceID, deviceStatus.Status)
+	}
+}
+
+func (app *App) handleHealthUpdate(deviceID, topic, payload string) {
+	app.statusMutex.Lock()
+	defer app.statusMutex.Unlock()
+
+	if deviceStatus, exists := app.deviceStatus[deviceID]; exists {
+		deviceStatus.LastSeen = time.Now()
+		
+		// Parse health status
+		var healthData map[string]interface{}
+		if err := json.Unmarshal([]byte(payload), &healthData); err == nil {
+			if status, ok := healthData["status"].(string); ok {
+				deviceStatus.HealthStatus = status
+			}
+		} else {
+			// Simple string payload
+			deviceStatus.HealthStatus = payload
+		}
+
+		// Broadcast health update
+		app.broadcastHealthUpdate(deviceID, deviceStatus.HealthStatus)
 	}
 }
 
@@ -185,6 +282,25 @@ func (app *App) broadcastUpdate(deviceID string, status map[string]interface{}) 
 	for client := range app.wsClients {
 		if err := client.WriteJSON(message); err != nil {
 			log.Printf("Error sending WebSocket message: %v", err)
+			client.Close()
+			delete(app.wsClients, client)
+		}
+	}
+}
+
+func (app *App) broadcastHealthUpdate(deviceID, healthStatus string) {
+	app.wsMutex.RLock()
+	defer app.wsMutex.RUnlock()
+
+	message := WebSocketMessage{
+		Type:     "health_update",
+		DeviceID: deviceID,
+		Data:     map[string]interface{}{"status": healthStatus},
+	}
+
+	for client := range app.wsClients {
+		if err := client.WriteJSON(message); err != nil {
+			log.Printf("Error sending health WebSocket message: %v", err)
 			client.Close()
 			delete(app.wsClients, client)
 		}

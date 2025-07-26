@@ -9,6 +9,8 @@ class HomeAutomation {
             load15: []
         };
         this.maxDataPoints = 20;
+        this.automationStatus = {};
+        this.deviceHealth = {};
         this.init();
     }
 
@@ -18,6 +20,8 @@ class HomeAutomation {
         this.setupLoadChart();
         this.startSystemStatsPolling();
         this.loadInitialMqttLog();
+        this.loadAutomationStatus();
+        this.loadDeviceHealth();
     }
 
     async loadInitialMqttLog() {
@@ -25,14 +29,12 @@ class HomeAutomation {
             const response = await fetch('/api/mqtt-log');
             const logEntries = await response.json();
             
-            // Clear the placeholder
             const logContainer = document.getElementById('mqtt-log');
             if (logContainer) {
                 logContainer.innerHTML = '';
                 
-                // Add existing log entries (they come in reverse chronological order)
                 logEntries.forEach(entry => {
-                    this.addMqttLogEntry(entry, false); // false = don't scroll to top
+                    this.addMqttLogEntry(entry, false);
                 });
                 
                 if (logEntries.length === 0) {
@@ -41,6 +43,26 @@ class HomeAutomation {
             }
         } catch (error) {
             console.error('Failed to load initial MQTT log:', error);
+        }
+    }
+
+    async loadAutomationStatus() {
+        try {
+            const response = await fetch('/api/automations');
+            this.automationStatus = await response.json();
+            this.updateAutomationDisplay();
+        } catch (error) {
+            console.error('Failed to load automation status:', error);
+        }
+    }
+
+    async loadDeviceHealth() {
+        try {
+            const response = await fetch('/api/device-health');
+            this.deviceHealth = await response.json();
+            this.updateHealthDisplay();
+        } catch (error) {
+            console.error('Failed to load device health:', error);
         }
     }
 
@@ -103,7 +125,7 @@ class HomeAutomation {
 
     startSystemStatsPolling() {
         this.updateSystemStats();
-        setInterval(() => this.updateSystemStats(), 30000); // Update every 30 seconds
+        setInterval(() => this.updateSystemStats(), 30000);
     }
 
     async updateSystemStats() {
@@ -111,23 +133,19 @@ class HomeAutomation {
             const response = await fetch('/api/system-stats');
             const stats = await response.json();
             
-            // Update uptime
             document.getElementById('uptime-text').textContent = stats.uptime || 'Unknown';
             
-            // Update memory
             const memoryPercent = stats.memoryTotal > 0 ? 
                 ((stats.memoryUsed / stats.memoryTotal) * 100).toFixed(1) : 0;
             document.getElementById('memory-text').textContent = `${memoryPercent}%`;
             document.getElementById('memory-bar').style.width = `${memoryPercent}%`;
             
-            // Update load chart
             const now = new Date().toLocaleTimeString();
             this.loadData.labels.push(now);
             this.loadData.load1.push(stats.loadAvg1 || 0);
             this.loadData.load5.push(stats.loadAvg5 || 0);
             this.loadData.load15.push(stats.loadAvg15 || 0);
             
-            // Keep only last maxDataPoints
             if (this.loadData.labels.length > this.maxDataPoints) {
                 this.loadData.labels.shift();
                 this.loadData.load1.shift();
@@ -144,44 +162,72 @@ class HomeAutomation {
     }
 
     connectWebSocket() {
-        this.ws = new WebSocket('ws://' + window.location.host + '/ws');
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        this.ws = new WebSocket(protocol + '//' + window.location.host + '/ws');
         
         this.ws.onopen = () => {
             this.showToast('Connected to server', 'success');
-            document.getElementById('system-status').innerHTML = 
-                '<i class="bi bi-circle-fill text-success"></i> System Online';
+            this.updateConnectionStatus('online');
         };
 
         this.ws.onmessage = (event) => {
             const message = JSON.parse(event.data);
-            if (message.type === 'status_update') {
-                this.updateDeviceStatus(message.deviceId, message.data);
-            } else if (message.type === 'mqtt_log') {
-                this.addMqttLogEntry(message.data);
+            switch (message.type) {
+                case 'status_update':
+                    this.updateDeviceStatus(message.deviceId, message.data);
+                    break;
+                case 'health_update':
+                    this.updateDeviceHealth(message.deviceId, message.data);
+                    break;
+                case 'mqtt_log':
+                    this.addMqttLogEntry(message.data);
+                    break;
+                case 'automation_update':
+                    this.updateAutomationStatus(message.data);
+                    break;
             }
         };
 
         this.ws.onclose = () => {
             this.showToast('Connection lost. Reconnecting...', 'warning');
-            document.getElementById('system-status').innerHTML = 
-                '<i class="bi bi-circle-fill text-warning"></i> Reconnecting...';
+            this.updateConnectionStatus('reconnecting');
             setTimeout(() => this.connectWebSocket(), 3000);
         };
 
         this.ws.onerror = (error) => {
             this.showToast('Connection error', 'danger');
-            document.getElementById('system-status').innerHTML = 
-                '<i class="bi bi-circle-fill text-danger"></i> Connection Error';
+            this.updateConnectionStatus('error');
         };
     }
 
+    updateConnectionStatus(status) {
+        const statusElement = document.getElementById('system-status');
+        if (!statusElement) return;
+
+        let icon, text, colorClass;
+        switch (status) {
+            case 'online':
+                icon = 'bi-circle-fill text-success';
+                text = 'System Online';
+                break;
+            case 'reconnecting':
+                icon = 'bi-circle-fill text-warning';
+                text = 'Reconnecting...';
+                break;
+            case 'error':
+                icon = 'bi-circle-fill text-danger';
+                text = 'Connection Error';
+                break;
+        }
+
+        statusElement.innerHTML = `<i class="bi ${icon}"></i> ${text}`;
+    }
+
     updateDeviceStatus(deviceId, status) {
-        // Update all instances of this device status across all tabs
         const statusElements = document.querySelectorAll(`[id^="status-${deviceId}"]`);
         
         let statusText = 'Online';
         let badgeClass = 'bg-success';
-        let iconClass = 'bi-circle-fill text-success';
 
         if (status.value !== undefined) {
             statusText += ' - ' + status.value;
@@ -192,11 +238,114 @@ class HomeAutomation {
             statusText += ' (' + time + ')';
         }
 
-        const statusHtml = `<span class="badge ${badgeClass}"><i class="bi ${iconClass}"></i> ${statusText}</span>`;
+        const statusHtml = `<span class="badge ${badgeClass}"><i class="bi bi-circle-fill text-success"></i> ${statusText}</span>`;
         
         statusElements.forEach(element => {
             element.innerHTML = statusHtml;
         });
+    }
+
+    updateDeviceHealth(deviceId, healthData) {
+        const healthElements = document.querySelectorAll(`[id^="health-${deviceId}"]`);
+        const status = healthData.status;
+        
+        let iconClass, colorClass;
+        switch (status) {
+            case 'online':
+                iconClass = 'bi-heart-fill';
+                colorClass = 'text-success';
+                break;
+            case 'offline':
+                iconClass = 'bi-heart';
+                colorClass = 'text-danger';
+                break;
+            default:
+                iconClass = 'bi-question-circle';
+                colorClass = 'text-warning';
+        }
+
+        healthElements.forEach(element => {
+            element.innerHTML = `<i class="bi ${iconClass} ${colorClass}" title="Device ${status}"></i>`;
+        });
+
+        // Update global health status
+        this.deviceHealth.devices = this.deviceHealth.devices || {};
+        this.deviceHealth.devices[deviceId] = { healthStatus: status };
+        this.updateHealthDisplay();
+    }
+
+    updateHealthDisplay() {
+        const healthSummary = document.getElementById('health-summary');
+        if (!healthSummary || !this.deviceHealth.devices) return;
+
+        let online = 0, offline = 0, unknown = 0;
+        
+        Object.values(this.deviceHealth.devices).forEach(device => {
+            switch (device.healthStatus) {
+                case 'online': online++; break;
+                case 'offline': offline++; break;
+                default: unknown++; break;
+            }
+        });
+
+        healthSummary.innerHTML = `
+            <div class="row text-center">
+                <div class="col">
+                    <div class="text-success h4">${online}</div>
+                    <div class="small">Online</div>
+                </div>
+                <div class="col">
+                    <div class="text-danger h4">${offline}</div>
+                    <div class="small">Offline</div>
+                </div>
+                <div class="col">
+                    <div class="text-warning h4">${unknown}</div>
+                    <div class="small">Unknown</div>
+                </div>
+            </div>
+        `;
+    }
+
+    updateAutomationDisplay() {
+        const automationList = document.getElementById('automation-list');
+        if (!automationList) return;
+
+        let html = '';
+        Object.entries(this.automationStatus).forEach(([id, automation]) => {
+            const nextRun = new Date(automation.nextRun).toLocaleString();
+            const statusBadge = automation.enabled ? 
+                '<span class="badge bg-success">Enabled</span>' : 
+                '<span class="badge bg-secondary">Disabled</span>';
+            
+            const runningBadge = automation.running ? 
+                '<span class="badge bg-info ms-1">Running</span>' : '';
+
+            html += `
+                <div class="card mb-2">
+                    <div class="card-body py-2">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                <strong>${automation.name}</strong>
+                                <div class="small text-muted">Next: ${nextRun}</div>
+                            </div>
+                            <div>
+                                ${statusBadge}${runningBadge}
+                                <div class="btn-group btn-group-sm ms-2">
+                                    <button class="btn btn-outline-primary" onclick="toggleAutomation('${id}')">
+                                        ${automation.enabled ? 'Disable' : 'Enable'}
+                                    </button>
+                                    <button class="btn btn-outline-success" onclick="triggerAutomation('${id}')">
+                                        Trigger
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        });
+
+        automationList.innerHTML = html || '<div class="text-muted">No automations configured</div>';
     }
 
     setupToasts() {
@@ -244,21 +393,35 @@ class HomeAutomation {
         const logContainer = document.getElementById('mqtt-log');
         if (!logContainer) return;
 
-        // Remove the placeholder text if it exists
         const placeholder = logContainer.querySelector('.text-muted');
         if (placeholder) {
             placeholder.remove();
         }
 
-        // Create new log entry
         const logLine = document.createElement('div');
         logLine.className = 'mqtt-log-entry mb-1';
         
-        // Determine if this is an outgoing message
         const isOutgoing = logEntry.topic.includes('(OUT)');
-        const topicClass = isOutgoing ? 'text-info' : 'text-warning';
-        const topicText = isOutgoing ? logEntry.topic.replace(' (OUT)', '') : logEntry.topic;
-        const direction = isOutgoing ? '→' : '←';
+        const isAutomation = logEntry.topic.includes('(AUTO)');
+        const isHealth = logEntry.topic.includes('(HEALTH)');
+        
+        let topicClass = 'text-warning';
+        let direction = '←';
+        let topicText = logEntry.topic;
+        
+        if (isOutgoing) {
+            topicClass = 'text-info';
+            direction = '→';
+            topicText = logEntry.topic.replace(' (OUT)', '');
+        } else if (isAutomation) {
+            topicClass = 'text-success';
+            direction = '⚡';
+            topicText = logEntry.topic.replace(' (AUTO)', '');
+        } else if (isHealth) {
+            topicClass = 'text-primary';
+            direction = '♥';
+            topicText = logEntry.topic.replace(' (HEALTH)', '');
+        }
         
         logLine.innerHTML = `
             <span class="text-secondary">[${logEntry.timestamp}]</span>
@@ -267,22 +430,19 @@ class HomeAutomation {
             <span class="text-light">: ${this.formatPayload(logEntry.payload)}</span>
         `;
 
-        // Add to top of log for new messages, or to bottom for initial load
         if (scrollToTop) {
             logContainer.insertBefore(logLine, logContainer.firstChild);
         } else {
             logContainer.appendChild(logLine);
         }
 
-        // Keep only the latest entries (limit handled by server, but cleanup any extras)
         const entries = logContainer.querySelectorAll('.mqtt-log-entry');
-        if (entries.length > 25) {
-            for (let i = 25; i < entries.length; i++) {
+        if (entries.length > 50) {
+            for (let i = 50; i < entries.length; i++) {
                 entries[i].remove();
             }
         }
 
-        // Auto-scroll to top to show newest messages (only for new messages)
         if (scrollToTop) {
             logContainer.scrollTop = 0;
         }
@@ -290,18 +450,16 @@ class HomeAutomation {
 
     formatPayload(payload) {
         try {
-            // Try to parse and pretty-print JSON
             const parsed = JSON.parse(payload);
             return JSON.stringify(parsed, null, 0);
         } catch (e) {
-            // Return as-is if not JSON
             return payload;
         }
     }
 }
 
-// Global functions for button clicks (called from HTML)
-async function sendCommand(deviceId, topic, payload, localCommand) {
+// Global functions for button clicks
+async function sendCommand(deviceId, topic, payload, localCommand, controlType = '') {
     try {
         const response = await fetch('/api/control', {
             method: 'POST',
@@ -312,9 +470,12 @@ async function sendCommand(deviceId, topic, payload, localCommand) {
                 device: deviceId,
                 topic: topic,
                 payload: payload,
-                localCommand: localCommand
+                localCommand: localCommand,
+                controlType: controlType
             })
         });
+
+        const result = await response.json();
 
         if (response.ok) {
             if (topic) {
@@ -326,11 +487,11 @@ async function sendCommand(deviceId, topic, payload, localCommand) {
                 console.log(`Local command executed: ${localCommand}`);
             }
         } else {
-            throw new Error(`HTTP ${response.status}`);
+            throw new Error(result.error || `HTTP ${response.status}`);
         }
     } catch (error) {
         console.error('Failed to send command:', error);
-        app.showToast('Failed to send command', 'danger');
+        app.showToast(`Failed to send command: ${error.message}`, 'danger');
     }
 }
 
@@ -339,23 +500,19 @@ async function sendSliderCommand(deviceId, topic, label, value) {
         [label.toLowerCase()]: parseInt(value)
     });
     
-    await sendCommand(deviceId, topic, payload, '');
+    await sendCommand(deviceId, topic, payload, '', 'slider');
 }
 
 function updateSliderValue(deviceId, label, value, context = '') {
-    // Update the specific slider value display
     const suffix = context ? `-${context}` : '';
     const element = document.getElementById(`slider-${deviceId}-${label}${suffix}`);
     if (element) {
         element.textContent = value;
     }
     
-    // Update all instances across tabs if no specific context
     if (!context) {
-        // Update the "all" tab
         updateSliderValue(deviceId, label, value, 'all');
         
-        // Update category-specific tabs (this would need to be dynamically determined)
         const allElements = document.querySelectorAll(`[id^="slider-${deviceId}-${label}-"]`);
         allElements.forEach(el => {
             el.textContent = value;
@@ -366,7 +523,6 @@ function updateSliderValue(deviceId, label, value, context = '') {
 async function toggleCommand(deviceId, topic, payload, localCommand, button) {
     const isActive = button.classList.contains('active');
     
-    // Update all instances of this toggle button across tabs
     const allToggleButtons = document.querySelectorAll(`[id^="toggle-${deviceId}-${button.id.split('-')[2]}"]`);
     
     allToggleButtons.forEach(btn => {
@@ -379,7 +535,59 @@ async function toggleCommand(deviceId, topic, payload, localCommand, button) {
         }
     });
     
-    await sendCommand(deviceId, topic, payload, localCommand);
+    await sendCommand(deviceId, topic, payload, localCommand, 'toggle');
+}
+
+async function toggleAutomation(automationId) {
+    try {
+        const automation = app.automationStatus[automationId];
+        const action = automation.enabled ? 'disable' : 'enable';
+        
+        const response = await fetch('/api/automations', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                automationId: automationId,
+                action: action
+            })
+        });
+
+        if (response.ok) {
+            app.showToast(`Automation ${action}d successfully`, 'success');
+            app.loadAutomationStatus(); // Refresh status
+        } else {
+            throw new Error(`HTTP ${response.status}`);
+        }
+    } catch (error) {
+        console.error('Failed to toggle automation:', error);
+        app.showToast('Failed to toggle automation', 'danger');
+    }
+}
+
+async function triggerAutomation(automationId) {
+    try {
+        const response = await fetch('/api/automations', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                automationId: automationId,
+                action: 'trigger'
+            })
+        });
+
+        if (response.ok) {
+            app.showToast('Automation triggered successfully', 'success');
+        } else {
+            throw new Error(`HTTP ${response.status}`);
+        }
+    } catch (error) {
+        console.error('Failed to trigger automation:', error);
+        app.showToast('Failed to trigger automation', 'danger');
+    }
 }
 
 function clearMqttLog() {
@@ -394,4 +602,18 @@ function clearMqttLog() {
 let app;
 document.addEventListener('DOMContentLoaded', function() {
     app = new HomeAutomation();
+    
+    // Refresh automation status every 30 seconds
+    setInterval(() => {
+        if (app.loadAutomationStatus) {
+            app.loadAutomationStatus();
+        }
+    }, 30000);
+    
+    // Refresh device health every 60 seconds
+    setInterval(() => {
+        if (app.loadDeviceHealth) {
+            app.loadDeviceHealth();
+        }
+    }, 60000);
 });
