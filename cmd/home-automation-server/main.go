@@ -2,10 +2,10 @@ package main
 
 import (
 	"flag"
+	"github.com/gorilla/websocket"
 	"log"
 	"net/http"
 	"path/filepath"
-	"github.com/gorilla/websocket"
 )
 
 func main() {
@@ -78,4 +78,3 @@ func main() {
 	log.Println("Starting server on :8080")
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
-

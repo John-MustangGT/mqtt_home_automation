@@ -9,7 +9,6 @@ import (
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 )
 
-
 func (app *App) connectMQTTWithRetry() error {
 	retryCount := 0
 

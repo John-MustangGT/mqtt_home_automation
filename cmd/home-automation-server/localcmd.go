@@ -21,7 +21,6 @@ func (app *App) executeLocalCommand(command string) {
 	}
 }
 
-
 func (app *App) getSystemStats() SystemStats {
 	stats := SystemStats{}
 

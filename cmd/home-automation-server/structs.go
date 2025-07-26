@@ -98,4 +98,3 @@ type App struct {
 	mqttLog      []MQTTLogEntry
 	mqttLogMutex sync.RWMutex
 }
-

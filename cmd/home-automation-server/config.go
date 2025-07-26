@@ -7,7 +7,6 @@ import (
 	"log"
 )
 
-
 func (app *App) loadConfig(filename string) error {
 	data, err := ioutil.ReadFile(filename)
 	if err != nil {

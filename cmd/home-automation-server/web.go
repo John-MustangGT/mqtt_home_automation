@@ -12,7 +12,6 @@ import (
 	uuid "github.com/google/uuid"
 )
 
-
 func (app *App) loadTemplates() error {
 	var err error
 
@@ -173,4 +172,3 @@ func (app *App) handleSystemStats(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(stats)
 }
-
