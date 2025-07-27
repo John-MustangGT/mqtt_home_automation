@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<config>
+    <server>
+        <interface>0.0.0.0</interface>
+        <port>8080</port>
+    </server>
+    
+    <buttons>
+        <button>
+            <n>System Info</n>
+            <command>uname -a</command>
+            <size>md</size>
+            <color>primary</color>
+        </button>
+        
+        <button>
+            <n>Disk Usage</n>
+            <command>df -h</command>
+            <size>md</size>
+            <color>info</color>
+        </button>
+        
+        <button>
+            <n>Memory Usage</n>
+            <command>free -h</command>
+            <size>md</size>
+            <color>success</color>
+        </button>
+        
+        <button>
+            <n>List Processes</n>
+            <command>ps aux</command>
+            <size>lg</size>
+            <color>warning</color>
+        </button>
+        
+        <button>
+            <n>Network Info</n>
+            <command>ip addr show</command>
+            <size>sm</size>
+            <color>secondary</color>
+        </button>
+        
+        <button>
+            <n>Uptime</n>
+            <command>uptime</command>
+            <size>sm</size>
+            <color>dark</color>
+        </button>
+        
+        <button>
+            <n>Current Date</n>
+            <command>date</command>
+            <size>sm</size>
+            <color>light</color>
+        </button>
+    </buttons>
+</config>

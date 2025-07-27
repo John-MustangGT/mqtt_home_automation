@@ -1,3 +1,5 @@
 home-automation-server
+command_runner_server
 mqtt_listener
+serial_expect
 main
