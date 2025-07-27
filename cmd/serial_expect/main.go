@@ -22,6 +22,7 @@ type Config struct {
 	Serial  Serial        `xml:"serial"`
 	Timeout Timeout       `xml:"timeout"`
 	Scripts []NamedScript `xml:"script"`
+	Tries   []TryBlock    `xml:"try"`
 }
 
 type Serial struct {
@@ -41,9 +42,18 @@ type NamedScript struct {
 	Content string `xml:",chardata"`
 }
 
+type TryBlock struct {
+	Name   string `xml:"name,attr"`
+	Script string `xml:"script,attr"`
+	Except string `xml:"except,attr"`
+	Retry  bool   `xml:"retry,attr"`
+}
+
 type Command struct {
-	Type  string // "send" or "expect"
-	Value string
+	Type       string // "send", "expect", or "try"
+	Value      string
+	TryBlock   *TryBlock // Only used for try commands
+	ScriptMap  map[string]NamedScript // Only used for try commands
 }
 
 // Expect matching types
@@ -66,6 +76,7 @@ type SerialExpect struct {
 	commands       []Command
 	scriptTimeout  time.Duration
 	receiveTimeout time.Duration
+	config         *Config
 }
 
 func main() {
@@ -105,6 +116,7 @@ func main() {
 		logger:         logger,
 		scriptTimeout:  scriptTimeout,
 		receiveTimeout: receiveTimeout,
+		config:         config,
 	}
 
 	// Determine which scripts to execute
@@ -117,11 +129,22 @@ func main() {
 	var allCommands []Command
 	for i, scriptContent := range scriptsToExecute {
 		logger.Printf("Parsing script %d: %s", i+1, scriptContent.Name)
-		commands, err := parseScript(scriptContent.Content)
-		if err != nil {
-			logger.Fatalf("Failed to parse script %q: %v", scriptContent.Name, err)
+		
+		// Check if this is a try block
+		if strings.HasPrefix(scriptContent.Content, "__TRY_BLOCK__") {
+			tryBlockName := strings.TrimPrefix(scriptContent.Content, "__TRY_BLOCK__")
+			commands, err := se.parseTryBlock(config, tryBlockName)
+			if err != nil {
+				logger.Fatalf("Failed to parse try block %q: %v", tryBlockName, err)
+			}
+			allCommands = append(allCommands, commands...)
+		} else {
+			commands, err := parseScript(scriptContent.Content)
+			if err != nil {
+				logger.Fatalf("Failed to parse script %q: %v", scriptContent.Name, err)
+			}
+			allCommands = append(allCommands, commands...)
 		}
-		allCommands = append(allCommands, commands...)
 	}
 	
 	se.commands = allCommands
@@ -154,44 +177,73 @@ func main() {
 }
 
 func selectScripts(config *Config, scriptNames []string) ([]NamedScript, error) {
-	if len(config.Scripts) == 0 {
-		return nil, fmt.Errorf("no scripts found in configuration")
+	// Build a map of all available scripts
+	scriptMap := make(map[string]NamedScript)
+	
+	// Add regular scripts
+	for i, script := range config.Scripts {
+		name := script.Name
+		if name == "" {
+			// Unnamed script - give it a default name for backward compatibility
+			name = fmt.Sprintf("script%d", i+1)
+			script.Name = name
+		}
+		scriptMap[name] = script
+	}
+	
+	// Add try blocks as executable units
+	for _, tryBlock := range config.Tries {
+		if tryBlock.Name == "" {
+			return nil, fmt.Errorf("try block must have a name attribute")
+		}
+		// Validate that referenced scripts exist
+		if _, exists := scriptMap[tryBlock.Script]; !exists {
+			return nil, fmt.Errorf("try block %q references non-existent script %q", tryBlock.Name, tryBlock.Script)
+		}
+		if tryBlock.Except != "" {
+			if _, exists := scriptMap[tryBlock.Except]; !exists {
+				return nil, fmt.Errorf("try block %q references non-existent except script %q", tryBlock.Name, tryBlock.Except)
+			}
+		}
+		// Add try block as a virtual script
+		scriptMap[tryBlock.Name] = NamedScript{
+			Name:    tryBlock.Name,
+			Content: fmt.Sprintf("__TRY_BLOCK__%s", tryBlock.Name), // Special marker
+		}
 	}
 
-	// Handle case where scripts might not have names (backward compatibility)
-	var availableScripts []NamedScript
-	for i, script := range config.Scripts {
-		if script.Name == "" {
-			// Unnamed script - give it a default name for backward compatibility
-			script.Name = fmt.Sprintf("script%d", i+1)
-		}
-		availableScripts = append(availableScripts, script)
+	if len(scriptMap) == 0 {
+		return nil, fmt.Errorf("no scripts or try blocks found in configuration")
 	}
 
 	// If no script names specified on command line
 	if len(scriptNames) == 0 {
-		// Run only the first script
-		return []NamedScript{availableScripts[0]}, nil
+		// Run only the first available script/try block
+		for _, script := range config.Scripts {
+			name := script.Name
+			if name == "" {
+				name = "script1"
+				script.Name = name
+			}
+			return []NamedScript{script}, nil
+		}
+		for _, tryBlock := range config.Tries {
+			return []NamedScript{{Name: tryBlock.Name, Content: fmt.Sprintf("__TRY_BLOCK__%s", tryBlock.Name)}}, nil
+		}
 	}
 
 	// Find and validate requested scripts
 	var selectedScripts []NamedScript
 	for _, requestedName := range scriptNames {
-		found := false
-		for _, availableScript := range availableScripts {
-			if availableScript.Name == requestedName {
-				selectedScripts = append(selectedScripts, availableScript)
-				found = true
-				break
-			}
-		}
-		if !found {
+		if script, exists := scriptMap[requestedName]; exists {
+			selectedScripts = append(selectedScripts, script)
+		} else {
 			// List available scripts for error message
 			var availableNames []string
-			for _, script := range availableScripts {
-				availableNames = append(availableNames, script.Name)
+			for name := range scriptMap {
+				availableNames = append(availableNames, name)
 			}
-			return nil, fmt.Errorf("script %q not found. Available scripts: %s", 
+			return nil, fmt.Errorf("script or try block %q not found. Available: %s", 
 				requestedName, strings.Join(availableNames, ", "))
 		}
 	}
@@ -275,6 +327,10 @@ func (se *SerialExpect) executeScript(readChan <-chan string) error {
 			if err := se.handleExpect(cmd.Value, readChan); err != nil {
 				return err
 			}
+		case "try":
+			if err := se.handleTry(cmd, readChan); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -334,6 +390,60 @@ func (se *SerialExpect) executeDryRun(inputFile string) error {
 			if !found {
 				return fmt.Errorf("pattern not found in remaining input: %s", cmd.Value)
 			}
+			
+		case "try":
+			se.logger.Printf("TRY BLOCK: %s (dry run - executing main script only)", cmd.Value)
+			
+			// In dry run, just execute the main script
+			tryBlock := cmd.TryBlock
+			scriptMap := cmd.ScriptMap
+			
+			mainScript, exists := scriptMap[tryBlock.Script]
+			if !exists {
+				return fmt.Errorf("script %q referenced by try block not found", tryBlock.Script)
+			}
+			
+			commands, err := parseScript(mainScript.Content)
+			if err != nil {
+				return fmt.Errorf("failed to parse script in try block: %v", err)
+			}
+			
+			// Execute the main script commands in dry run mode
+			for _, subCmd := range commands {
+				switch subCmd.Type {
+				case "send":
+					toSend := se.formatSendValue(subCmd.Value)
+					fmt.Printf("\033[1mTX: %q\033[0m\n", toSend)
+				case "expect":
+					expectPattern, err := parseExpectPattern(subCmd.Value)
+					if err != nil {
+						return fmt.Errorf("invalid expect pattern %q: %v", subCmd.Value, err)
+					}
+					
+					se.logger.Printf("EXPECT: %s", subCmd.Value)
+					
+					found := false
+					startIndex := lineIndex
+					
+					for lineIndex < len(lines) {
+						line := lines[lineIndex]
+						se.logger.Printf("RX: %s", line)
+						
+						if se.checkDryRunMatch(expectPattern, line, lineIndex-startIndex) {
+							se.logger.Printf("MATCHED: %s", subCmd.Value)
+							found = true
+							lineIndex++
+							break
+						}
+						lineIndex++
+					}
+					
+					if !found {
+						se.logger.Printf("PATTERN NOT FOUND (would trigger except): %s", subCmd.Value)
+						// In dry run, continue without failing
+					}
+				}
+			}
 		}
 	}
 	
@@ -381,6 +491,41 @@ func (se *SerialExpect) checkDryRunMatch(ep *ExpectPattern, line string, linesSi
 	}
 	
 	return false
+}
+
+func (se *SerialExpect) parseTryBlock(config *Config, tryBlockName string) ([]Command, error) {
+	// Find the try block
+	var tryBlock *TryBlock
+	for _, tb := range config.Tries {
+		if tb.Name == tryBlockName {
+			tryBlock = &tb
+			break
+		}
+	}
+	
+	if tryBlock == nil {
+		return nil, fmt.Errorf("try block %q not found", tryBlockName)
+	}
+	
+	// Build script map for the try block
+	scriptMap := make(map[string]NamedScript)
+	for _, script := range config.Scripts {
+		name := script.Name
+		if name == "" {
+			continue // Skip unnamed scripts in try blocks
+		}
+		scriptMap[name] = script
+	}
+	
+	// Create a single try command that contains all the information
+	tryCommand := Command{
+		Type:      "try",
+		Value:     tryBlockName,
+		TryBlock:  tryBlock,
+		ScriptMap: scriptMap,
+	}
+	
+	return []Command{tryCommand}, nil
 }
 
 func parseScript(scriptText string) ([]Command, error) {
@@ -454,6 +599,107 @@ func (se *SerialExpect) readSerial(readChan chan<- string) {
 			}
 		}
 	}
+}
+
+func (se *SerialExpect) handleTry(cmd Command, readChan <-chan string) error {
+	tryBlock := cmd.TryBlock
+	scriptMap := cmd.ScriptMap
+	
+	se.logger.Printf("TRY: Executing try block %q with script %q", tryBlock.Name, tryBlock.Script)
+	
+	// Get the main script to execute
+	mainScript, exists := scriptMap[tryBlock.Script]
+	if !exists {
+		return fmt.Errorf("script %q referenced by try block %q not found", tryBlock.Script, tryBlock.Name)
+	}
+	
+	// Parse the main script commands
+	commands, err := parseScript(mainScript.Content)
+	if err != nil {
+		return fmt.Errorf("failed to parse script %q in try block: %v", tryBlock.Script, err)
+	}
+	
+	maxRetries := 1
+	if tryBlock.Retry {
+		maxRetries = 2 // Original attempt + 1 retry
+	}
+	
+	var lastError error
+	
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		if attempt > 1 {
+			se.logger.Printf("TRY: Retrying script %q (attempt %d/%d)", tryBlock.Script, attempt, maxRetries)
+		}
+		
+		// Execute the main script commands
+		lastError = nil
+		for _, subCmd := range commands {
+			switch subCmd.Type {
+			case "send":
+				if err := se.handleSend(subCmd.Value); err != nil {
+					lastError = err
+					break
+				}
+			case "expect":
+				if err := se.handleExpect(subCmd.Value, readChan); err != nil {
+					lastError = err
+					break
+				}
+			}
+		}
+		
+		// If no error occurred, we're done
+		if lastError == nil {
+			se.logger.Printf("TRY: Script %q completed successfully", tryBlock.Script)
+			return nil
+		}
+		
+		se.logger.Printf("TRY: Script %q failed: %v", tryBlock.Script, lastError)
+		
+		// If this is the last attempt or we're not retrying, break
+		if attempt >= maxRetries {
+			break
+		}
+	}
+	
+	// If we get here, all attempts failed
+	se.logger.Printf("TRY: All attempts failed for script %q", tryBlock.Script)
+	
+	// Execute except script if specified
+	if tryBlock.Except != "" {
+		se.logger.Printf("TRY: Executing except script %q", tryBlock.Except)
+		
+		exceptScript, exists := scriptMap[tryBlock.Except]
+		if !exists {
+			return fmt.Errorf("except script %q referenced by try block %q not found", tryBlock.Except, tryBlock.Name)
+		}
+		
+		exceptCommands, err := parseScript(exceptScript.Content)
+		if err != nil {
+			return fmt.Errorf("failed to parse except script %q: %v", tryBlock.Except, err)
+		}
+		
+		// Execute except script commands
+		for _, exceptCmd := range exceptCommands {
+			switch exceptCmd.Type {
+			case "send":
+				if err := se.handleSend(exceptCmd.Value); err != nil {
+					se.logger.Printf("TRY: Error in except script: %v", err)
+					// Continue with except script even if there are errors
+				}
+			case "expect":
+				if err := se.handleExpect(exceptCmd.Value, readChan); err != nil {
+					se.logger.Printf("TRY: Error in except script: %v", err)
+					// Continue with except script even if there are errors
+				}
+			}
+		}
+		
+		se.logger.Printf("TRY: Except script %q completed", tryBlock.Except)
+	}
+	
+	// Return the original error from the main script
+	return fmt.Errorf("try block %q failed: %v", tryBlock.Name, lastError)
 }
 
 func (se *SerialExpect) handleSend(value string) error {

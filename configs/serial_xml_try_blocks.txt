@@ -1,0 +1,42 @@
+<config>
+    <serial device="/dev/ttyUSB0" speed="9600" parity="false" bits="8"></serial>
+    <timeout script="2m" receive="5s"></timeout>
+    
+    <!-- Try blocks for error handling -->
+    <try name="login" script="login-root" except="logout" retry="true"></try>
+    <try name="config-mode" script="enter-config" except="reset-session" retry="false"></try>
+    
+    <!-- Regular scripts -->
+    <script name="login-root">
+send ''
+expect "Login:"
+send "root\r"
+expect 'word:'
+send 'Password12345'
+expect /^root@.*% /
+    </script>
+    
+    <script name="logout">
+send 'exit'
+expect "Login:"
+    </script>
+    
+    <script name="enter-config">
+send "cli\r"
+expect /root@.*\> /
+send 'config'
+expect /root@.*\# /
+    </script>
+    
+    <script name="reset-session">
+send '\003'
+expect /^root@.*% /
+send "cli\r"
+expect /root@.*\> /
+    </script>
+    
+    <script name="show-version">
+send 'show version'
+expect /root@.*\# /
+    </script>
+</config>
