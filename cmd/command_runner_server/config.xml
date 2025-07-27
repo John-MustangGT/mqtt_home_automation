@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<config>
+    <server>
+        <interface>0.0.0.0</interface>
+        <port>8000</port>
+        <webdir>./web</webdir>
+    </server>
+    
+    <buttons>
+        <button>
+            <name>system_info</name>
+            <display_name>📊 System Info</display_name>
+            <command>uname -a</command>
+            <size>md</size>
+            <color>primary</color>
+        </button>
+        
+        <button>
+            <name>disk_usage</name>
+            <display_name>💾 Disk Usage</display_name>
+            <command>df -h</command>
+            <size>md</size>
+            <color>info</color>
+        </button>
+        
+        <button>
+            <name>memory_usage</name>
+            <display_name>🧠 Memory Usage</display_name>
+            <command>free -h</command>
+            <size>md</size>
+            <color>success</color>
+        </button>
+        
+        <button>
+            <name>list_processes</name>
+            <display_name>⚙️ Running Processes</display_name>
+            <command>ps aux</command>
+            <size>lg</size>
+            <color>warning</color>
+        </button>
+        
+        <button>
+            <name>network_info</name>
+            <display_name>🌐 Network</display_name>
+            <command>ip addr show</command>
+            <size>sm</size>
+            <color>secondary</color>
+        </button>
+        
+        <button>
+            <name>uptime</name>
+            <display_name>⏰ Server Uptime</display_name>
+            <command>uptime</command>
+            <size>sm</size>
+            <color>dark</color>
+        </button>
+        
+        <button>
+            <name>current_date</name>
+            <display_name>📅 Date & Time</display_name>
+            <command>date</command>
+            <size>sm</size>
+            <color>light</color>
+        </button>
+    </buttons>
+</config>

@@ -1,0 +1,381 @@
+package main
+
+import (
+	"encoding/xml"
+	"flag"
+	"fmt"
+	"html/template"
+	"io/ioutil"
+	"log"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+)
+
+// XML Configuration structures
+type Config struct {
+	XMLName   xml.Name `xml:"config"`
+	Server    Server   `xml:"server"`
+	Buttons   []Button `xml:"buttons>button"`
+}
+
+type Server struct {
+	Interface string `xml:"interface"`
+	Port      string `xml:"port"`
+	WebDir    string `xml:"webdir"`
+}
+
+type Button struct {
+	Name        string `xml:"name"`
+	DisplayName string `xml:"display_name"`
+	Command     string `xml:"command"`
+	Size        string `xml:"size,omitempty"`    // sm, md, lg
+	Color       string `xml:"color,omitempty"`   // primary, secondary, success, danger, warning, info
+}
+
+// Global variables
+var config Config
+var commandOutputs = make(map[string]string)
+var templates *template.Template
+var configMutex sync.RWMutex
+var configFile string
+var watchedFiles = make(map[string]time.Time)
+var serverStartTime time.Time
+var lastReloadTime time.Time
+
+// HTML template
+// Templates will be loaded from files
+
+func loadConfig(filename string) error {
+	configMutex.Lock()
+	defer configMutex.Unlock()
+	
+	data, err := ioutil.ReadFile(filename)
+	if err != nil {
+		return err
+	}
+	
+	var newConfig Config
+	err = xml.Unmarshal(data, &newConfig)
+	if err != nil {
+		return err
+	}
+	
+	// Load templates from webdir
+	templatePath := newConfig.Server.WebDir + "/*.html"
+	newTemplates, err := template.ParseGlob(templatePath)
+	if err != nil {
+		return fmt.Errorf("error loading templates from %s: %v", templatePath, err)
+	}
+	
+	// Update global variables
+	config = newConfig
+	templates = newTemplates
+	lastReloadTime = time.Now()
+	
+	log.Printf("Configuration reloaded from %s", filename)
+	return nil
+}
+
+func homeHandler(w http.ResponseWriter, r *http.Request) {
+	configMutex.RLock()
+	defer configMutex.RUnlock()
+	
+	data := struct {
+		Buttons        []Button
+		Output         string
+		CurrentTime    string
+		ServerUptime   string
+		SystemUptime   string
+		SystemLoad     string
+		LastReload     string
+		ConfigFile     string
+	}{
+		Buttons:        config.Buttons,
+		Output:         getLatestOutput(),
+		CurrentTime:    time.Now().Format("2006-01-02 15:04:05 MST"),
+		ServerUptime:   time.Since(serverStartTime).Round(time.Second).String(),
+		SystemUptime:   getSystemUptime(),
+		SystemLoad:     getSystemLoad(),
+		LastReload:     getLastReloadTime(),
+		ConfigFile:     configFile,
+	}
+	
+	err := templates.ExecuteTemplate(w, "index.html", data)
+	if err != nil {
+		http.Error(w, "Error rendering template: "+err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func runCommandHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+	
+	command := r.FormValue("command")
+	name := r.FormValue("name")
+	
+	if command == "" {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+	
+	// Execute command
+	go executeCommand(name, command)
+	
+	// Redirect back to home and switch to output tab
+	w.Header().Set("Content-Type", "text/html")
+	fmt.Fprintf(w, `
+		<script>
+			window.location.href = '/';
+			setTimeout(function() {
+				var outputTab = document.getElementById('output-tab');
+				if (outputTab) {
+					outputTab.click();
+				}
+			}, 100);
+		</script>
+	`)
+}
+
+func outputHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain")
+	w.Write([]byte(getLatestOutput()))
+}
+
+func executeCommand(name, command string) {
+	timestamp := time.Now().Format("2006-01-02 15:04:05")
+	output := fmt.Sprintf("[%s] Executing: %s\n", timestamp, name)
+	
+	// Split command into parts
+	parts := strings.Fields(command)
+	if len(parts) == 0 {
+		appendOutput(output + "Error: Empty command\n\n")
+		return
+	}
+	
+	// Execute command
+	cmd := exec.Command(parts[0], parts[1:]...)
+	result, err := cmd.CombinedOutput()
+	
+	if err != nil {
+		output += fmt.Sprintf("Error: %v\n", err)
+	}
+	
+	output += string(result) + "\n" + strings.Repeat("-", 50) + "\n\n"
+	appendOutput(output)
+}
+
+func appendOutput(text string) {
+	// Keep only last 10KB of output to prevent memory issues
+	const maxOutputSize = 10240
+	
+	if len(commandOutputs["latest"]) > maxOutputSize {
+		commandOutputs["latest"] = commandOutputs["latest"][len(commandOutputs["latest"])-maxOutputSize:]
+	}
+	
+	commandOutputs["latest"] += text
+}
+
+func getLatestOutput() string {
+	if output, exists := commandOutputs["latest"]; exists {
+		return output
+	}
+	return "No commands executed yet."
+}
+
+// System information functions
+func getSystemUptime() string {
+	if runtime.GOOS == "linux" {
+		if data, err := ioutil.ReadFile("/proc/uptime"); err == nil {
+			parts := strings.Fields(string(data))
+			if len(parts) > 0 {
+				if seconds, err := strconv.ParseFloat(parts[0], 64); err == nil {
+					duration := time.Duration(seconds) * time.Second
+					return duration.Round(time.Second).String()
+				}
+			}
+		}
+	}
+	// Fallback for non-Linux systems
+	cmd := exec.Command("uptime")
+	if output, err := cmd.Output(); err == nil {
+		return strings.TrimSpace(string(output))
+	}
+	return "Unable to determine system uptime"
+}
+
+func getSystemLoad() string {
+	if runtime.GOOS == "linux" {
+		if data, err := ioutil.ReadFile("/proc/loadavg"); err == nil {
+			parts := strings.Fields(string(data))
+			if len(parts) >= 3 {
+				return fmt.Sprintf("%s %s %s", parts[0], parts[1], parts[2])
+			}
+		}
+	}
+	// Fallback for non-Linux systems
+	cmd := exec.Command("uptime")
+	if output, err := cmd.Output(); err == nil {
+		uptime := string(output)
+		if idx := strings.Index(uptime, "load average:"); idx != -1 {
+			return strings.TrimSpace(uptime[idx+13:])
+		}
+	}
+	return "Unable to determine system load"
+}
+
+func getLastReloadTime() string {
+	if lastReloadTime.IsZero() {
+		return "Never"
+	}
+	return lastReloadTime.Format("2006-01-02 15:04:05 MST")
+}
+
+// New handlers
+func xmlConfigHandler(w http.ResponseWriter, r *http.Request) {
+	data, err := ioutil.ReadFile(configFile)
+	if err != nil {
+		http.Error(w, "Error reading config file: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	
+	w.Header().Set("Content-Type", "application/xml")
+	w.Header().Set("Content-Disposition", "attachment; filename=\"config.xml\"")
+	w.Write(data)
+}
+
+func apiTimeHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain")
+	w.Write([]byte(time.Now().Format("2006-01-02 15:04:05 MST")))
+}
+
+// File monitoring functions
+func getFileModTime(filename string) (time.Time, error) {
+	info, err := os.Stat(filename)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return info.ModTime(), nil
+}
+
+func getWatchedFiles() []string {
+	configMutex.RLock()
+	defer configMutex.RUnlock()
+	
+	files := []string{configFile}
+	
+	// Add HTML template files
+	templatePattern := config.Server.WebDir + "/*.html"
+	matches, err := filepath.Glob(templatePattern)
+	if err == nil {
+		files = append(files, matches...)
+	}
+	
+	// Add CSS and JS files
+	cssPattern := config.Server.WebDir + "/static/css/*.css"
+	cssMatches, err := filepath.Glob(cssPattern)
+	if err == nil {
+		files = append(files, cssMatches...)
+	}
+	
+	jsPattern := config.Server.WebDir + "/static/js/*.js"
+	jsMatches, err := filepath.Glob(jsPattern)
+	if err == nil {
+		files = append(files, jsMatches...)
+	}
+	
+	return files
+}
+
+func initFileWatcher() {
+	files := getWatchedFiles()
+	for _, file := range files {
+		if modTime, err := getFileModTime(file); err == nil {
+			watchedFiles[file] = modTime
+		}
+	}
+}
+
+func checkForChanges() bool {
+	files := getWatchedFiles()
+	changed := false
+	
+	for _, file := range files {
+		currentModTime, err := getFileModTime(file)
+		if err != nil {
+			continue
+		}
+		
+		if lastModTime, exists := watchedFiles[file]; !exists || currentModTime.After(lastModTime) {
+			log.Printf("File changed: %s", file)
+			watchedFiles[file] = currentModTime
+			changed = true
+		}
+	}
+	
+	return changed
+}
+
+func startFileWatcher() {
+	ticker := time.NewTicker(1 * time.Second)
+	go func() {
+		for range ticker.C {
+			if checkForChanges() {
+				log.Println("Changes detected, reloading configuration...")
+				if err := loadConfig(configFile); err != nil {
+					log.Printf("Error reloading config: %v", err)
+				} else {
+					log.Println("Configuration successfully reloaded")
+				}
+			}
+		}
+	}()
+}
+
+func main() {
+	// Parse command line arguments
+	configFilePtr := flag.String("config", "config.xml", "Path to the XML configuration file")
+	flag.Parse()
+	
+	configFile = *configFilePtr
+	serverStartTime = time.Now()
+	
+	// Load initial configuration
+	if err := loadConfig(configFile); err != nil {
+		log.Fatal("Error loading config file:", err)
+	}
+	
+	// Set initial reload time
+	lastReloadTime = serverStartTime
+	
+	// Initialize file watcher
+	initFileWatcher()
+	startFileWatcher()
+	
+	// Set up static file serving for CSS, JS, images, etc.
+	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir(config.Server.WebDir+"/static/"))))
+	
+	// Set up routes
+	http.HandleFunc("/", homeHandler)
+	http.HandleFunc("/run", runCommandHandler)
+	http.HandleFunc("/output", outputHandler)
+	http.HandleFunc("/config.xml", xmlConfigHandler)
+	http.HandleFunc("/api/time", apiTimeHandler)
+	
+	// Start server
+	address := config.Server.Interface + ":" + config.Server.Port
+	fmt.Printf("Server starting on %s\n", address)
+	fmt.Printf("Using config file: %s\n", configFile)
+	fmt.Printf("Using web directory: %s\n", config.Server.WebDir)
+	fmt.Printf("File watching enabled - server will auto-reload on changes\n")
+	
+	log.Fatal(http.ListenAndServe(address, nil))
+}
