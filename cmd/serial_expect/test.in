@@ -1,6 +1,12 @@
 Welcome to Device
 Login:
 Password:
-root@device% 
-root@device> 
-root@device# 
+Last login: Sun Jul 27 14:44:11 2025 from 172.31.31.31
+--- JUNOS 23.4R1.9 Kernel 32-bit  JNPR-12.1-20231122.ee0e992_buil
+root@sw-core0:RE:0% 
+{master:0} 
+root@sw-core0> 
+Entering configuration mode
+
+{master:0}[edit]
+root@sw-core0# 

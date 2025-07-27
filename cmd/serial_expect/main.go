@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/xml"
 	"flag"
 	"fmt"
@@ -19,6 +20,7 @@ import (
 type Config struct {
 	XMLName xml.Name `xml:"config"`
 	Serial  Serial   `xml:"serial"`
+	Timeout Timeout  `xml:"timeout"`
 	Script  string   `xml:"script"`
 }
 
@@ -27,6 +29,11 @@ type Serial struct {
 	Speed  int    `xml:"speed,attr"`
 	Parity bool   `xml:"parity,attr"`
 	Bits   int    `xml:"bits,attr"`
+}
+
+type Timeout struct {
+	Script  string `xml:"script,attr"`
+	Receive string `xml:"receive,attr"`
 }
 
 type Command struct {
@@ -48,10 +55,12 @@ type ExpectPattern struct {
 }
 
 type SerialExpect struct {
-	port     serial.Port
-	buffer   strings.Builder
-	logger   *log.Logger
-	commands []Command
+	port           serial.Port
+	buffer         strings.Builder
+	logger         *log.Logger
+	commands       []Command
+	scriptTimeout  time.Duration
+	receiveTimeout time.Duration
 }
 
 func main() {
@@ -77,9 +86,17 @@ func main() {
 		logger.Fatalf("Failed to parse config: %v", err)
 	}
 
+	// Parse timeout values
+	scriptTimeout, receiveTimeout, err := parseTimeouts(config.Timeout)
+	if err != nil {
+		logger.Fatalf("Failed to parse timeouts: %v", err)
+	}
+
 	// Create SerialExpect instance
 	se := &SerialExpect{
-		logger: logger,
+		logger:         logger,
+		scriptTimeout:  scriptTimeout,
+		receiveTimeout: receiveTimeout,
 	}
 
 	// Parse script commands
@@ -88,6 +105,8 @@ func main() {
 		logger.Fatalf("Failed to parse script: %v", err)
 	}
 	se.commands = commands
+
+	logger.Printf("Script timeout: %v, Receive timeout: %v", scriptTimeout, receiveTimeout)
 
 	if *dryRun != "" {
 		// Dry run mode
@@ -104,8 +123,8 @@ func main() {
 
 		logger.Printf("Connected to %s at %d baud", config.Serial.Device, config.Serial.Speed)
 
-		// Execute script
-		if err := se.executeScript(); err != nil {
+		// Execute script with timeout
+		if err := se.executeScriptWithTimeout(); err != nil {
 			logger.Fatalf("Script execution failed: %v", err)
 		}
 	}
@@ -125,6 +144,72 @@ func parseConfig(filename string) (*Config, error) {
 	}
 
 	return &config, nil
+}
+
+func parseTimeouts(timeout Timeout) (time.Duration, time.Duration, error) {
+	// Default values
+	scriptTimeout := 60 * time.Second  // 1 minute default
+	receiveTimeout := 30 * time.Second // 30 seconds default
+
+	var err error
+
+	// Parse script timeout if provided
+	if timeout.Script != "" {
+		scriptTimeout, err = time.ParseDuration(timeout.Script)
+		if err != nil {
+			return 0, 0, fmt.Errorf("invalid script timeout format %q: %v", timeout.Script, err)
+		}
+	}
+
+	// Parse receive timeout if provided
+	if timeout.Receive != "" {
+		receiveTimeout, err = time.ParseDuration(timeout.Receive)
+		if err != nil {
+			return 0, 0, fmt.Errorf("invalid receive timeout format %q: %v", timeout.Receive, err)
+		}
+	}
+
+	return scriptTimeout, receiveTimeout, nil
+}
+
+func (se *SerialExpect) executeScriptWithTimeout() error {
+	// Create context with script timeout
+	ctx, cancel := context.WithTimeout(context.Background(), se.scriptTimeout)
+	defer cancel()
+
+	// Start reading from serial port in goroutine
+	readChan := make(chan string, 100)
+	go se.readSerial(readChan)
+
+	// Execute script with context
+	done := make(chan error, 1)
+	go func() {
+		done <- se.executeScript(readChan)
+	}()
+
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		return fmt.Errorf("script timeout exceeded (%v)", se.scriptTimeout)
+	}
+}
+
+func (se *SerialExpect) executeScript(readChan <-chan string) error {
+	for _, cmd := range se.commands {
+		switch cmd.Type {
+		case "send":
+			if err := se.handleSend(cmd.Value); err != nil {
+				return err
+			}
+		case "expect":
+			if err := se.handleExpect(cmd.Value, readChan); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
 }
 
 func (se *SerialExpect) executeDryRun(inputFile string) error {
@@ -272,27 +357,6 @@ func (se *SerialExpect) openSerial(config Serial) error {
 	return nil
 }
 
-func (se *SerialExpect) executeScript() error {
-	// Start reading from serial port in goroutine
-	readChan := make(chan string, 100)
-	go se.readSerial(readChan)
-
-	for _, cmd := range se.commands {
-		switch cmd.Type {
-		case "send":
-			if err := se.handleSend(cmd.Value); err != nil {
-				return err
-			}
-		case "expect":
-			if err := se.handleExpect(cmd.Value, readChan); err != nil {
-				return err
-			}
-		}
-	}
-
-	return nil
-}
-
 func (se *SerialExpect) readSerial(readChan chan<- string) {
 	reader := bufio.NewReader(se.port)
 	for {
@@ -367,7 +431,7 @@ func (se *SerialExpect) handleExpect(pattern string, readChan <-chan string) err
 	var buffer strings.Builder
 	var currentLine strings.Builder
 	
-	timeout := time.After(30 * time.Second)
+	timeout := time.After(se.receiveTimeout)
 	
 	for {
 		select {
@@ -387,7 +451,7 @@ func (se *SerialExpect) handleExpect(pattern string, readChan <-chan string) err
 			}
 			
 		case <-timeout:
-			return fmt.Errorf("timeout waiting for pattern: %s", pattern)
+			return fmt.Errorf("receive timeout (%v) waiting for pattern: %s", se.receiveTimeout, pattern)
 		}
 	}
 }

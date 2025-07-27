@@ -1,5 +1,6 @@
 <config>
     <serial device="/dev/ttyUSB0" speed="9600" parity="false" bits="8"></serial>
+    <timeout script="1m" receive="5s"></timeout>
     <script>
 send ''
 expect "Login:"
