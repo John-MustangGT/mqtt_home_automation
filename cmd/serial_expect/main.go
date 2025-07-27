@@ -18,10 +18,10 @@ import (
 
 // XML configuration structures
 type Config struct {
-	XMLName xml.Name `xml:"config"`
-	Serial  Serial   `xml:"serial"`
-	Timeout Timeout  `xml:"timeout"`
-	Script  string   `xml:"script"`
+	XMLName xml.Name      `xml:"config"`
+	Serial  Serial        `xml:"serial"`
+	Timeout Timeout       `xml:"timeout"`
+	Scripts []NamedScript `xml:"script"`
 }
 
 type Serial struct {
@@ -34,6 +34,11 @@ type Serial struct {
 type Timeout struct {
 	Script  string `xml:"script,attr"`
 	Receive string `xml:"receive,attr"`
+}
+
+type NamedScript struct {
+	Name    string `xml:"name,attr"`
+	Content string `xml:",chardata"`
 }
 
 type Command struct {
@@ -70,9 +75,12 @@ func main() {
 	flag.Parse()
 
 	if *configFile == "" {
-		fmt.Fprintf(os.Stderr, "Usage: %s -config <xml-file> [-no-timestamp] [-dry-run <input-file>]\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "Usage: %s -config <xml-file> [-no-timestamp] [-dry-run <input-file>] [script1] [script2] ...\n", os.Args[0])
 		os.Exit(1)
 	}
+
+	// Get script names from command line arguments
+	scriptNames := flag.Args()
 
 	// Setup logger
 	logger := log.New(os.Stdout, "", log.LstdFlags)
@@ -99,14 +107,27 @@ func main() {
 		receiveTimeout: receiveTimeout,
 	}
 
-	// Parse script commands
-	commands, err := parseScript(config.Script)
+	// Determine which scripts to execute
+	scriptsToExecute, err := selectScripts(config, scriptNames)
 	if err != nil {
-		logger.Fatalf("Failed to parse script: %v", err)
+		logger.Fatalf("Failed to select scripts: %v", err)
 	}
-	se.commands = commands
+
+	// Parse and combine all selected scripts
+	var allCommands []Command
+	for i, scriptContent := range scriptsToExecute {
+		logger.Printf("Parsing script %d: %s", i+1, scriptContent.Name)
+		commands, err := parseScript(scriptContent.Content)
+		if err != nil {
+			logger.Fatalf("Failed to parse script %q: %v", scriptContent.Name, err)
+		}
+		allCommands = append(allCommands, commands...)
+	}
+	
+	se.commands = allCommands
 
 	logger.Printf("Script timeout: %v, Receive timeout: %v", scriptTimeout, receiveTimeout)
+	logger.Printf("Executing %d scripts with %d total commands", len(scriptsToExecute), len(allCommands))
 
 	if *dryRun != "" {
 		// Dry run mode
@@ -130,6 +151,52 @@ func main() {
 	}
 
 	logger.Println("Script completed successfully")
+}
+
+func selectScripts(config *Config, scriptNames []string) ([]NamedScript, error) {
+	if len(config.Scripts) == 0 {
+		return nil, fmt.Errorf("no scripts found in configuration")
+	}
+
+	// Handle case where scripts might not have names (backward compatibility)
+	var availableScripts []NamedScript
+	for i, script := range config.Scripts {
+		if script.Name == "" {
+			// Unnamed script - give it a default name for backward compatibility
+			script.Name = fmt.Sprintf("script%d", i+1)
+		}
+		availableScripts = append(availableScripts, script)
+	}
+
+	// If no script names specified on command line
+	if len(scriptNames) == 0 {
+		// Run only the first script
+		return []NamedScript{availableScripts[0]}, nil
+	}
+
+	// Find and validate requested scripts
+	var selectedScripts []NamedScript
+	for _, requestedName := range scriptNames {
+		found := false
+		for _, availableScript := range availableScripts {
+			if availableScript.Name == requestedName {
+				selectedScripts = append(selectedScripts, availableScript)
+				found = true
+				break
+			}
+		}
+		if !found {
+			// List available scripts for error message
+			var availableNames []string
+			for _, script := range availableScripts {
+				availableNames = append(availableNames, script.Name)
+			}
+			return nil, fmt.Errorf("script %q not found. Available scripts: %s", 
+				requestedName, strings.Join(availableNames, ", "))
+		}
+	}
+
+	return selectedScripts, nil
 }
 
 func parseConfig(filename string) (*Config, error) {
@@ -196,7 +263,9 @@ func (se *SerialExpect) executeScriptWithTimeout() error {
 }
 
 func (se *SerialExpect) executeScript(readChan <-chan string) error {
-	for _, cmd := range se.commands {
+	for i, cmd := range se.commands {
+		se.logger.Printf("Executing command %d/%d: %s %s", i+1, len(se.commands), cmd.Type, cmd.Value)
+		
 		switch cmd.Type {
 		case "send":
 			if err := se.handleSend(cmd.Value); err != nil {
@@ -226,7 +295,9 @@ func (se *SerialExpect) executeDryRun(inputFile string) error {
 	
 	lineIndex := 0
 	
-	for _, cmd := range se.commands {
+	for i, cmd := range se.commands {
+		se.logger.Printf("Command %d/%d: %s %s", i+1, len(se.commands), cmd.Type, cmd.Value)
+		
 		switch cmd.Type {
 		case "send":
 			// Handle send command - show what would be sent in bold
