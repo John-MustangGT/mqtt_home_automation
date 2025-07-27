@@ -82,15 +82,27 @@
                                     </div>
                                     <div class="row mb-3">
                                         <div class="col-sm-4"><strong>System Uptime:</strong></div>
-                                        <div class="col-sm-8">{{.SystemUptime}}</div>
+                                        <div class="col-sm-8" id="system-uptime">{{.SystemUptime}}</div>
                                     </div>
                                     <div class="row mb-3">
                                         <div class="col-sm-4"><strong>System Load:</strong></div>
-                                        <div class="col-sm-8">{{.SystemLoad}}</div>
+                                        <div class="col-sm-8" id="system-load">{{.SystemLoad}}</div>
+                                    </div>
+                                    <div class="row mb-3">
+                                        <div class="col-sm-4"><strong>Memory Usage:</strong></div>
+                                        <div class="col-sm-8" id="memory-info">{{.MemoryInfo}}</div>
                                     </div>
                                     <div class="row mb-3">
                                         <div class="col-sm-4"><strong>Last Config Reload:</strong></div>
                                         <div class="col-sm-8" id="last-reload">{{.LastReload}}</div>
+                                    </div>
+                                    <div class="row mb-3">
+                                        <div class="col-sm-4"><strong>Button Count:</strong></div>
+                                        <div class="col-sm-8" id="button-count">{{.ButtonCount}}</div>
+                                    </div>
+                                    <div class="row mb-3">
+                                        <div class="col-sm-4"><strong>Go Version:</strong></div>
+                                        <div class="col-sm-8">{{.GoVersion}}</div>
                                     </div>
                                     <div class="row">
                                         <div class="col-sm-4"><strong>Config File:</strong></div>
@@ -114,6 +126,9 @@
                                         </button>
                                         <button class="btn btn-outline-success" onclick="refreshAbout()">
                                             🔄 Refresh Info
+                                        </button>
+                                        <button class="btn btn-outline-warning" onclick="toggleAutoRefresh()">
+                                            ⏸️ <span id="auto-refresh-text">Pause Auto-refresh</span>
                                         </button>
                                     </div>
                                 </div>

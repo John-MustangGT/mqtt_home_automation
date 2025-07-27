@@ -94,17 +94,23 @@ func homeHandler(w http.ResponseWriter, r *http.Request) {
 		ServerUptime   string
 		SystemUptime   string
 		SystemLoad     string
+		MemoryInfo     string
 		LastReload     string
 		ConfigFile     string
+		ButtonCount    int
+		GoVersion      string
 	}{
 		Buttons:        config.Buttons,
 		Output:         getLatestOutput(),
 		CurrentTime:    time.Now().Format("2006-01-02 15:04:05 MST"),
-		ServerUptime:   time.Since(serverStartTime).Round(time.Second).String(),
+		ServerUptime:   formatDuration(time.Since(serverStartTime)),
 		SystemUptime:   getSystemUptime(),
 		SystemLoad:     getSystemLoad(),
+		MemoryInfo:     getMemoryInfo(),
 		LastReload:     getLastReloadTime(),
 		ConfigFile:     configFile,
+		ButtonCount:    len(config.Buttons),
+		GoVersion:      runtime.Version(),
 	}
 	
 	err := templates.ExecuteTemplate(w, "index.html", data)
@@ -199,7 +205,7 @@ func getSystemUptime() string {
 			if len(parts) > 0 {
 				if seconds, err := strconv.ParseFloat(parts[0], 64); err == nil {
 					duration := time.Duration(seconds) * time.Second
-					return duration.Round(time.Second).String()
+					return formatDuration(duration)
 				}
 			}
 		}
@@ -212,12 +218,28 @@ func getSystemUptime() string {
 	return "Unable to determine system uptime"
 }
 
+func formatDuration(d time.Duration) string {
+	days := int(d.Hours()) / 24
+	hours := int(d.Hours()) % 24
+	minutes := int(d.Minutes()) % 60
+	seconds := int(d.Seconds()) % 60
+	
+	if days > 0 {
+		return fmt.Sprintf("%dd %dh %dm %ds", days, hours, minutes, seconds)
+	} else if hours > 0 {
+		return fmt.Sprintf("%dh %dm %ds", hours, minutes, seconds)
+	} else if minutes > 0 {
+		return fmt.Sprintf("%dm %ds", minutes, seconds)
+	}
+	return fmt.Sprintf("%ds", seconds)
+}
+
 func getSystemLoad() string {
 	if runtime.GOOS == "linux" {
 		if data, err := ioutil.ReadFile("/proc/loadavg"); err == nil {
 			parts := strings.Fields(string(data))
 			if len(parts) >= 3 {
-				return fmt.Sprintf("%s %s %s", parts[0], parts[1], parts[2])
+				return fmt.Sprintf("%s %s %s (1m 5m 15m)", parts[0], parts[1], parts[2])
 			}
 		}
 	}
@@ -230,6 +252,38 @@ func getSystemLoad() string {
 		}
 	}
 	return "Unable to determine system load"
+}
+
+func getMemoryInfo() string {
+	if runtime.GOOS == "linux" {
+		if data, err := ioutil.ReadFile("/proc/meminfo"); err == nil {
+			lines := strings.Split(string(data), "\n")
+			//memTotal, memFree, memAvailable := "", "", ""
+			memTotal, _, memAvailable := "", "", ""
+			
+			for _, line := range lines {
+				if strings.HasPrefix(line, "MemTotal:") {
+					memTotal = strings.Fields(line)[1]
+				//} else if strings.HasPrefix(line, "MemFree:") {
+				//	memFree = strings.Fields(line)[1]
+				} else if strings.HasPrefix(line, "MemAvailable:") {
+					memAvailable = strings.Fields(line)[1]
+				}
+			}
+			
+			if memTotal != "" && memAvailable != "" {
+				if total, err1 := strconv.Atoi(memTotal); err1 == nil {
+					if available, err2 := strconv.Atoi(memAvailable); err2 == nil {
+						used := total - available
+						usedPercent := float64(used) / float64(total) * 100
+						return fmt.Sprintf("%.1f%% used (%d MB / %d MB)", 
+							usedPercent, used/1024, total/1024)
+					}
+				}
+			}
+		}
+	}
+	return "Unable to determine memory usage"
 }
 
 func getLastReloadTime() string {
@@ -255,6 +309,36 @@ func xmlConfigHandler(w http.ResponseWriter, r *http.Request) {
 func apiTimeHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain")
 	w.Write([]byte(time.Now().Format("2006-01-02 15:04:05 MST")))
+}
+
+func apiStatsHandler(w http.ResponseWriter, r *http.Request) {
+	configMutex.RLock()
+	defer configMutex.RUnlock()
+	
+	stats := map[string]interface{}{
+		"server_uptime":   formatDuration(time.Since(serverStartTime)),
+		"system_uptime":   getSystemUptime(),
+		"system_load":     getSystemLoad(),
+		"memory_info":     getMemoryInfo(),
+		"last_reload":     getLastReloadTime(),
+		"button_count":    len(config.Buttons),
+		"go_version":      runtime.Version(),
+		"current_time":    time.Now().Format("2006-01-02 15:04:05 MST"),
+	}
+	
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, `{
+		"server_uptime":"%s",
+		"system_uptime":"%s",
+		"system_load":"%s",
+		"memory_info":"%s",
+		"last_reload":"%s",
+		"button_count":%d,
+		"go_version":"%s",
+		"current_time":"%s"
+	}`, stats["server_uptime"], stats["system_uptime"], stats["system_load"], 
+		stats["memory_info"], stats["last_reload"], stats["button_count"], 
+		stats["go_version"], stats["current_time"])
 }
 
 // File monitoring functions
@@ -369,6 +453,7 @@ func main() {
 	http.HandleFunc("/output", outputHandler)
 	http.HandleFunc("/config.xml", xmlConfigHandler)
 	http.HandleFunc("/api/time", apiTimeHandler)
+	http.HandleFunc("/api/stats", apiStatsHandler)
 	
 	// Start server
 	address := config.Server.Interface + ":" + config.Server.Port

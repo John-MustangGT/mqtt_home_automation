@@ -57,7 +57,7 @@
         
         <button>
             <name>current_date</name>
-            <display_name>📅 Date & Time</display_name>
+            <display_name>📅 Date &amp; Time</display_name>
             <command>date</command>
             <size>sm</size>
             <color>light</color>
