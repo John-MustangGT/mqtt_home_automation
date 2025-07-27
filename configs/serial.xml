@@ -1,0 +1,15 @@
+<config>
+    <serial device="/dev/ttyUSB0" speed="9600" parity="false" bits="8"></serial>
+    <script>
+send ''
+expect "Login:"
+send "root\r"
+expect 'word:'
+send 'Password12345'
+expect /^root@.*% /
+send "cli\r"
+expect /root@.*\> /
+send 'config'
+expect /root@.*\# /
+    </script>
+</config>
