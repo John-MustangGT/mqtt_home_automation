@@ -11,10 +11,19 @@
 </head>
 <body>
     <ion-app>
-        <ion-header>
+	    <ion-header>
             <ion-toolbar color="primary">
                 <ion-title>Command Runner</ion-title>
                 <ion-buttons slot="end">
+                    <!-- Framework Selector -->
+                    <ion-select
+                        value="{{.UIFramework}}"
+                        interface="popover"
+                        onchange="changeFramework(this.value)"
+                        style="min-width: 100px;">
+                        <ion-select-option value="bootstrap">Bootstrap</ion-select-option>
+                        <ion-select-option value="ionic">Ionic</ion-select-option>
+                    </ion-select>
                     <ion-button id="time-display">
                         <ion-icon name="time-outline" slot="start"></ion-icon>
                         <ion-label>{{.CurrentTime}}</ion-label>
@@ -22,7 +31,6 @@
                 </ion-buttons>
             </ion-toolbar>
         </ion-header>
-        
         <ion-content>
             <ion-segment value="commands" id="main-segment">
                 <ion-segment-button value="commands">
@@ -40,6 +48,7 @@
             </ion-segment>
             
             <!-- Commands Tab -->
+
             <div id="commands-content" class="tab-content active">
                 <ion-grid>
                     <ion-row>

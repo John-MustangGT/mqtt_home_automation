@@ -4,7 +4,7 @@
         <interface>0.0.0.0</interface>
         <port>8000</port>
         <webdir>./web</webdir>
-        <ui_framework>bootstrap</ui_framework> <!-- Options: bootstrap, ionic -->
+        <ui_framework>ionic</ui_framework> <!-- Options: bootstrap, ionic -->
     </server>
     
     <buttons>

@@ -1,3 +1,22 @@
+// Change framework function
+function changeFramework(framework) {
+    debugLog('Changing framework to:', framework);
+    
+    // Create a form and submit it
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.action = '/set-framework';
+    
+    const input = document.createElement('input');
+    input.type = 'hidden';
+    input.name = 'framework';
+    input.value = framework;
+    
+    form.appendChild(input);
+    document.body.appendChild(form);
+    form.submit();
+}
+
 // Global variables for Ionic interface
 let autoRefreshEnabled = true;
 let refreshIntervals = [];

@@ -98,50 +98,6 @@ func loadConfig(filename string) error {
 	return nil
 }
 
-func homeHandler(w http.ResponseWriter, r *http.Request) {
-	configMutex.RLock()
-	defer configMutex.RUnlock()
-	
-	data := struct {
-		Buttons        []Button
-		Output         string
-		CurrentTime    string
-		ServerUptime   string
-		SystemUptime   string
-		SystemLoad     string
-		MemoryInfo     string
-		LastReload     string
-		ConfigFile     string
-		ButtonCount    int
-		GoVersion      string
-		UIFramework    string
-	}{
-		Buttons:        config.Buttons,
-		Output:         getLatestOutput(),
-		CurrentTime:    time.Now().Format("2006-01-02 15:04:05 MST"),
-		ServerUptime:   formatDuration(time.Since(serverStartTime)),
-		SystemUptime:   getSystemUptime(),
-		SystemLoad:     getSystemLoad(),
-		MemoryInfo:     getMemoryInfo(),
-		LastReload:     getLastReloadTime(),
-		ConfigFile:     configFile,
-		ButtonCount:    len(config.Buttons),
-		GoVersion:      runtime.Version(),
-		UIFramework:    config.Server.UIFramework,
-	}
-	
-	// Choose template based on UI framework
-	templateName := "index.html"
-	if config.Server.UIFramework == "ionic" {
-		templateName = "ionic.html"
-	}
-	
-	err := templates.ExecuteTemplate(w, templateName, data)
-	if err != nil {
-		http.Error(w, "Error rendering template: "+err.Error(), http.StatusInternalServerError)
-	}
-}
-
 func runCommandHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
 		debugLog("Non-POST request to /run, redirecting")
@@ -174,6 +130,85 @@ func outputHandler(w http.ResponseWriter, r *http.Request) {
 	debugLog("Output handler called, returning %d characters", len(output))
 	w.Header().Set("Content-Type", "text/plain")
 	w.Write([]byte(output))
+}
+
+func homeHandler(w http.ResponseWriter, r *http.Request) {
+	configMutex.RLock()
+	defer configMutex.RUnlock()
+
+	// Check for framework preference in cookie
+	currentFramework := config.Server.UIFramework
+	if cookie, err := r.Cookie("ui_framework"); err == nil {
+		if cookie.Value == "bootstrap" || cookie.Value == "ionic" {
+			currentFramework = cookie.Value
+		}
+	}
+
+	data := struct {
+		Buttons        []Button
+		Output         string
+		CurrentTime    string
+		ServerUptime   string
+		SystemUptime   string
+		SystemLoad     string
+		MemoryInfo     string
+		LastReload     string
+		ConfigFile     string
+		ButtonCount    int
+		GoVersion      string
+		UIFramework    string
+	}{
+		Buttons:        config.Buttons,
+		Output:         getLatestOutput(),
+		CurrentTime:    time.Now().Format("2006-01-02 15:04:05 MST"),
+		ServerUptime:   formatDuration(time.Since(serverStartTime)),
+		SystemUptime:   getSystemUptime(),
+		SystemLoad:     getSystemLoad(),
+		MemoryInfo:     getMemoryInfo(),
+		LastReload:     getLastReloadTime(),
+		ConfigFile:     configFile,
+		ButtonCount:    len(config.Buttons),
+		GoVersion:      runtime.Version(),
+		UIFramework:    currentFramework,
+	}
+
+	// Choose template based on current framework
+	templateName := "index.html"
+	if currentFramework == "ionic" {
+		templateName = "ionic.html"
+	}
+
+	err := templates.ExecuteTemplate(w, templateName, data)
+	if err != nil {
+		http.Error(w, "Error rendering template: "+err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func setFrameworkHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+
+	framework := r.FormValue("framework")
+	if framework != "bootstrap" && framework != "ionic" {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+
+	// Set cookie for 30 days
+	cookie := &http.Cookie{
+		Name:     "ui_framework",
+		Value:    framework,
+		Path:     "/",
+		MaxAge:   30 * 24 * 60 * 60, // 30 days
+		HttpOnly: false,
+		SameSite: http.SameSiteLaxMode,
+	}
+	http.SetCookie(w, cookie)
+
+	debugLog("UI Framework changed to: %s (saved in cookie)", framework)
+	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 func executeCommand(name, command string) {
@@ -495,6 +530,7 @@ func main() {
 	http.HandleFunc("/config.xml", xmlConfigHandler)
 	http.HandleFunc("/api/time", apiTimeHandler)
 	http.HandleFunc("/api/stats", apiStatsHandler)
+	http.HandleFunc("/set-framework", setFrameworkHandler)
 	
 	// Start server
 	address := config.Server.Interface + ":" + config.Server.Port
