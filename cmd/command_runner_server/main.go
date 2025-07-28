@@ -26,9 +26,10 @@ type Config struct {
 }
 
 type Server struct {
-	Interface string `xml:"interface"`
-	Port      string `xml:"port"`
-	WebDir    string `xml:"webdir"`
+	Interface   string `xml:"interface"`
+	Port        string `xml:"port"`
+	WebDir      string `xml:"webdir"`
+	UIFramework string `xml:"ui_framework,omitempty"` // bootstrap or ionic
 }
 
 type Button struct {
@@ -67,6 +68,11 @@ func loadConfig(filename string) error {
 		return err
 	}
 	
+	// Set default UI framework if not specified
+	if newConfig.Server.UIFramework == "" {
+		newConfig.Server.UIFramework = "bootstrap"
+	}
+	
 	// Load templates from webdir
 	templatePath := newConfig.Server.WebDir + "/*.html"
 	newTemplates, err := template.ParseGlob(templatePath)
@@ -80,6 +86,7 @@ func loadConfig(filename string) error {
 	lastReloadTime = time.Now()
 	
 	log.Printf("Configuration reloaded from %s", filename)
+	log.Printf("Using UI framework: %s", config.Server.UIFramework)
 	return nil
 }
 
@@ -99,6 +106,7 @@ func homeHandler(w http.ResponseWriter, r *http.Request) {
 		ConfigFile     string
 		ButtonCount    int
 		GoVersion      string
+		UIFramework    string
 	}{
 		Buttons:        config.Buttons,
 		Output:         getLatestOutput(),
@@ -111,9 +119,16 @@ func homeHandler(w http.ResponseWriter, r *http.Request) {
 		ConfigFile:     configFile,
 		ButtonCount:    len(config.Buttons),
 		GoVersion:      runtime.Version(),
+		UIFramework:    config.Server.UIFramework,
 	}
 	
-	err := templates.ExecuteTemplate(w, "index.html", data)
+	// Choose template based on UI framework
+	templateName := "index.html"
+	if config.Server.UIFramework == "ionic" {
+		templateName = "ionic.html"
+	}
+	
+	err := templates.ExecuteTemplate(w, templateName, data)
 	if err != nil {
 		http.Error(w, "Error rendering template: "+err.Error(), http.StatusInternalServerError)
 	}
@@ -324,6 +339,7 @@ func apiStatsHandler(w http.ResponseWriter, r *http.Request) {
 		"button_count":    len(config.Buttons),
 		"go_version":      runtime.Version(),
 		"current_time":    time.Now().Format("2006-01-02 15:04:05 MST"),
+		"ui_framework":    config.Server.UIFramework,
 	}
 	
 	w.Header().Set("Content-Type", "application/json")
@@ -335,10 +351,11 @@ func apiStatsHandler(w http.ResponseWriter, r *http.Request) {
 		"last_reload":"%s",
 		"button_count":%d,
 		"go_version":"%s",
-		"current_time":"%s"
+		"current_time":"%s",
+		"ui_framework":"%s"
 	}`, stats["server_uptime"], stats["system_uptime"], stats["system_load"], 
 		stats["memory_info"], stats["last_reload"], stats["button_count"], 
-		stats["go_version"], stats["current_time"])
+		stats["go_version"], stats["current_time"], stats["ui_framework"])
 }
 
 // File monitoring functions
@@ -460,6 +477,7 @@ func main() {
 	fmt.Printf("Server starting on %s\n", address)
 	fmt.Printf("Using config file: %s\n", configFile)
 	fmt.Printf("Using web directory: %s\n", config.Server.WebDir)
+	fmt.Printf("UI Framework: %s\n", config.Server.UIFramework)
 	fmt.Printf("File watching enabled - server will auto-reload on changes\n")
 	
 	log.Fatal(http.ListenAndServe(address, nil))

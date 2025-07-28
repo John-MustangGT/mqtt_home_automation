@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Command Runner - Ionic</title>
+    <script type="module" src="https://cdn.jsdelivr.net/npm/@ionic/core/dist/ionic/ionic.esm.js"></script>
+    <script nomodule src="https://cdn.jsdelivr.net/npm/@ionic/core/dist/ionic/ionic.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@ionic/core/css/ionic.bundle.css" />
+    <link href="/static/css/ionic-custom.css" rel="stylesheet">
+</head>
+<body>
+    <ion-app>
+        <ion-header>
+            <ion-toolbar color="primary">
+                <ion-title>Command Runner</ion-title>
+                <ion-buttons slot="end">
+                    <ion-button id="time-display">
+                        <ion-icon name="time-outline" slot="start"></ion-icon>
+                        <ion-label>{{.CurrentTime}}</ion-label>
+                    </ion-button>
+                </ion-buttons>
+            </ion-toolbar>
+        </ion-header>
+        
+        <ion-content>
+            <ion-segment value="commands" id="main-segment">
+                <ion-segment-button value="commands">
+                    <ion-label>Commands</ion-label>
+                    <ion-icon name="terminal-outline"></ion-icon>
+                </ion-segment-button>
+                <ion-segment-button value="output">
+                    <ion-label>Output</ion-label>
+                    <ion-icon name="document-text-outline"></ion-icon>
+                </ion-segment-button>
+                <ion-segment-button value="about">
+                    <ion-label>About</ion-label>
+                    <ion-icon name="information-circle-outline"></ion-icon>
+                </ion-segment-button>
+            </ion-segment>
+            
+            <!-- Commands Tab -->
+            <div id="commands-content" class="tab-content active">
+                <ion-grid>
+                    <ion-row>
+                        {{range .Buttons}}
+                        <ion-col size="12" size-md="6" size-lg="4">
+                            <form method="POST" action="/run">
+                                <input type="hidden" name="command" value="{{.Command}}">
+                                <input type="hidden" name="name" value="{{.Name}}">
+                                <ion-button 
+                                    expand="block" 
+                                    type="submit"
+                                    color="{{if .Color}}{{.Color}}{{else}}primary{{end}}"
+                                    size="{{if .Size}}{{.Size}}{{else}}default{{end}}"
+                                    class="command-button">
+                                    {{if .DisplayName}}{{.DisplayName}}{{else}}{{.Name}}{{end}}
+                                </ion-button>
+                            </form>
+                        </ion-col>
+                        {{end}}
+                    </ion-row>
+                </ion-grid>
+            </div>
+            
+            <!-- Output Tab -->
+            <div id="output-content" class="tab-content">
+                <ion-card>
+                    <ion-card-header>
+                        <ion-card-title>
+                            <ion-icon name="terminal-outline" slot="start"></ion-icon>
+                            Command Output
+                        </ion-card-title>
+                        <ion-button 
+                            fill="outline" 
+                            size="small" 
+                            onclick="clearOutput()" 
+                            slot="end"
+                            color="medium">
+                            <ion-icon name="trash-outline" slot="start"></ion-icon>
+                            Clear
+                        </ion-button>
+                    </ion-card-header>
+                    <ion-card-content>
+                        <div id="output-display" class="output-terminal">{{.Output}}</div>
+                    </ion-card-content>
+                </ion-card>
+            </div>
+            
+            <!-- About Tab -->
+            <div id="about-content" class="tab-content">
+                <ion-grid>
+                    <ion-row>
+                        <ion-col size="12" size-lg="8">
+                            <ion-card>
+                                <ion-card-header>
+                                    <ion-card-title>
+                                        <ion-icon name="hardware-chip-outline" slot="start"></ion-icon>
+                                        System Information
+                                    </ion-card-title>
+                                </ion-card-header>
+                                <ion-card-content>
+                                    <ion-list>
+                                        <ion-item>
+                                            <ion-icon name="server-outline" slot="start"></ion-icon>
+                                            <ion-label>
+                                                <h3>Server Uptime</h3>
+                                                <p id="server-uptime">{{.ServerUptime}}</p>
+                                            </ion-label>
+                                        </ion-item>
+                                        <ion-item>
+                                            <ion-icon name="desktop-outline" slot="start"></ion-icon>
+                                            <ion-label>
+                                                <h3>System Uptime</h3>
+                                                <p id="system-uptime">{{.SystemUptime}}</p>
+                                            </ion-label>
+                                        </ion-item>
+                                        <ion-item>
+                                            <ion-icon name="speedometer-outline" slot="start"></ion-icon>
+                                            <ion-label>
+                                                <h3>System Load</h3>
+                                                <p id="system-load">{{.SystemLoad}}</p>
+                                            </ion-label>
+                                        </ion-item>
+                                        <ion-item>
+                                            <ion-icon name="hardware-chip-outline" slot="start"></ion-icon>
+                                            <ion-label>
+                                                <h3>Memory Usage</h3>
+                                                <p id="memory-info">{{.MemoryInfo}}</p>
+                                            </ion-label>
+                                        </ion-item>
+                                        <ion-item>
+                                            <ion-icon name="refresh-outline" slot="start"></ion-icon>
+                                            <ion-label>
+                                                <h3>Last Config Reload</h3>
+                                                <p id="last-reload">{{.LastReload}}</p>
+                                            </ion-label>
+                                        </ion-item>
+                                        <ion-item>
+                                            <ion-icon name="grid-outline" slot="start"></ion-icon>
+                                            <ion-label>
+                                                <h3>Button Count</h3>
+                                                <p id="button-count">{{.ButtonCount}}</p>
+                                            </ion-label>
+                                        </ion-item>
+                                        <ion-item>
+                                            <ion-icon name="logo-github" slot="start"></ion-icon>
+                                            <ion-label>
+                                                <h3>Go Version</h3>
+                                                <p>{{.GoVersion}}</p>
+                                            </ion-label>
+                                        </ion-item>
+                                        <ion-item>
+                                            <ion-icon name="document-outline" slot="start"></ion-icon>
+                                            <ion-label>
+                                                <h3>Config File</h3>
+                                                <p><code>{{.ConfigFile}}</code></p>
+                                            </ion-label>
+                                        </ion-item>
+                                        <ion-item>
+                                            <ion-icon name="color-palette-outline" slot="start"></ion-icon>
+                                            <ion-label>
+                                                <h3>UI Framework</h3>
+                                                <p>{{.UIFramework}}</p>
+                                            </ion-label>
+                                        </ion-item>
+                                    </ion-list>
+                                </ion-card-content>
+                            </ion-card>
+                        </ion-col>
+                        
+                        <ion-col size="12" size-lg="4">
+                            <ion-card>
+                                <ion-card-header>
+                                    <ion-card-title>
+                                        <ion-icon name="settings-outline" slot="start"></ion-icon>
+                                        Configuration
+                                    </ion-card-title>
+                                </ion-card-header>
+                                <ion-card-content>
+                                    <ion-button expand="block" fill="outline" onclick="downloadXmlConfig()">
+                                        <ion-icon name="download-outline" slot="start"></ion-icon>
+                                        Download XML Config
+                                    </ion-button>
+                                    
+                                    <ion-button expand="block" fill="outline" onclick="viewXmlConfig()">
+                                        <ion-icon name="eye-outline" slot="start"></ion-icon>
+                                        View XML Config
+                                    </ion-button>
+                                    
+                                    <ion-button expand="block" fill="outline" color="success" onclick="refreshAbout()">
+                                        <ion-icon name="refresh-outline" slot="start"></ion-icon>
+                                        Refresh Info
+                                    </ion-button>
+                                    
+                                    <ion-button expand="block" fill="outline" color="warning" onclick="toggleAutoRefresh()">
+                                        <ion-icon name="pause-outline" slot="start" id="refresh-icon"></ion-icon>
+                                        <span id="auto-refresh-text">Pause Auto-refresh</span>
+                                    </ion-button>
+                                </ion-card-content>
+                            </ion-card>
+                        </ion-col>
+                    </ion-row>
+                </ion-grid>
+            </div>
+        </ion-content>
+        
+        <!-- XML Config Modal -->
+        <ion-modal id="xml-modal">
+            <ion-header>
+                <ion-toolbar>
+                    <ion-title>XML Configuration</ion-title>
+                    <ion-buttons slot="end">
+                        <ion-button onclick="closeXmlModal()">
+                            <ion-icon name="close"></ion-icon>
+                        </ion-button>
+                    </ion-buttons>
+                </ion-toolbar>
+            </ion-header>
+            <ion-content>
+                <ion-card>
+                    <ion-card-content>
+                        <pre id="xml-content" class="xml-display"></pre>
+                    </ion-card-content>
+                </ion-card>
+                <ion-button expand="block" onclick="downloadXmlConfig()" color="primary">
+                    <ion-icon name="download-outline" slot="start"></ion-icon>
+                    Download
+                </ion-button>
+            </ion-content>
+        </ion-modal>
+    </ion-app>
+    
+    <script src="/static/js/ionic-app.js"></script>
+</body>
+</html>
