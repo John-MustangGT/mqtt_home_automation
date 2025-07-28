@@ -1,22 +1,3 @@
-// Change framework function
-function changeFramework(framework) {
-    debugLog('Changing framework to:', framework);
-    
-    // Create a form and submit it
-    const form = document.createElement('form');
-    form.method = 'POST';
-    form.action = '/set-framework';
-    
-    const input = document.createElement('input');
-    input.type = 'hidden';
-    input.name = 'framework';
-    input.value = framework;
-    
-    form.appendChild(input);
-    document.body.appendChild(form);
-    form.submit();
-}
-
 // Global variables for Ionic interface
 let autoRefreshEnabled = true;
 let refreshIntervals = [];
@@ -48,10 +29,49 @@ function initializeIonicApp() {
             }
         });
     });
+
+    // Handle framework selector change
+    const frameworkSelector = document.getElementById('framework-selector');
+    if (frameworkSelector) {
+        frameworkSelector.addEventListener('ionChange', function(event) {
+            const selectedFramework = event.detail.value;
+            changeFramework(selectedFramework);
+        });
+    }
     
     // Start auto-refresh
     startAutoRefresh();
 }
+
+// Change framework function
+function changeFramework(framework) {
+    console.log('Changing framework to:', framework);
+
+    // Create a hidden form outside of any ion-content
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.action = '/set-framework';
+    form.style.display = 'none';
+
+    const input = document.createElement('input');
+    input.type = 'hidden';
+    input.name = 'framework';
+    input.value = framework;
+
+    form.appendChild(input);
+
+    // Append to body, not ion-content
+    document.body.appendChild(form);
+
+    // Submit and force reload
+    form.submit();
+
+    // Force hard reload to ensure framework change takes effect
+    setTimeout(() => {
+        window.location.href = window.location.href;
+    }, 100);
+}
+
 
 // Handle segment tab changes
 function handleSegmentChange(event) {

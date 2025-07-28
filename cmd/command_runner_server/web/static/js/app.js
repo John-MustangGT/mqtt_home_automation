@@ -1,20 +1,24 @@
 // Change framework function (optional for Bootstrap, but good for consistency)
 function changeFramework(framework) {
     debugLog('Changing framework to:', framework);
-    
-    // For Bootstrap, we can still use the form, but this provides consistency
+
     const form = document.createElement('form');
     form.method = 'POST';
     form.action = '/set-framework';
-    
+
     const input = document.createElement('input');
     input.type = 'hidden';
     input.name = 'framework';
     input.value = framework;
-    
+
     form.appendChild(input);
     document.body.appendChild(form);
     form.submit();
+
+    // Force hard reload after short delay
+    setTimeout(() => {
+        window.location.reload(true);
+    }, 500);
 }
 
 // Global variables

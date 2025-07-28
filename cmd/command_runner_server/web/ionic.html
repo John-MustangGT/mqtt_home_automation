@@ -16,11 +16,15 @@
                 <ion-title>Command Runner</ion-title>
                 <ion-buttons slot="end">
                     <!-- Framework Selector -->
-                    <ion-select
-                        value="{{.UIFramework}}"
-                        interface="popover"
-                        onchange="changeFramework(this.value)"
-                        style="min-width: 100px;">
+		    <div style="margin-right: 10px;">
+    <form method="POST" action="/set-framework" style="display: inline;">
+        <select name="framework" onchange="this.form.submit()"
+                class="form-control" style="width: auto; display: inline-block;">
+            <option value="bootstrap" {{if eq .UIFramework "bootstrap"}}selected{{end}}>Bootstrap</option>
+            <option value="ionic" {{if eq .UIFramework "ionic"}}selected{{end}}>Ionic</option>
+        </select>
+    </form>
+</div>
                         <ion-select-option value="bootstrap">Bootstrap</ion-select-option>
                         <ion-select-option value="ionic">Ionic</ion-select-option>
                     </ion-select>
