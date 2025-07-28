@@ -1,6 +1,7 @@
 // Global variables
 let autoRefreshEnabled = true;
 let refreshIntervals = [];
+let commandExecuted = false;
 
 // Auto-refresh output tab if it's active
 function refreshOutput() {
@@ -11,6 +12,9 @@ function refreshOutput() {
             .then(response => response.text())
             .then(data => {
                 document.getElementById('output-content').textContent = data;
+                // Auto-scroll to bottom
+                const outputElement = document.getElementById('output-content');
+                outputElement.scrollTop = outputElement.scrollHeight;
             })
             .catch(error => {
                 console.error('Error fetching output:', error);
@@ -102,6 +106,8 @@ function switchToOutputTab() {
     const outputTab = document.getElementById('output-tab');
     if (outputTab) {
         outputTab.click();
+        // Force refresh output after switching
+        setTimeout(refreshOutput, 100);
     }
 }
 
@@ -125,26 +131,66 @@ function refreshAbout() {
     updateStats();
 }
 
+// Check if we should auto-switch to output tab on page load
+function checkForNewOutput() {
+    // Check if there's new output (not the default message)
+    fetch('/output')
+        .then(response => response.text())
+        .then(data => {
+            if (data && data.trim() !== 'No commands executed yet.' && commandExecuted) {
+                switchToOutputTab();
+                commandExecuted = false;
+            }
+        })
+        .catch(error => {
+            console.error('Error checking output:', error);
+        });
+}
+
 // Add event listeners to command forms
 document.addEventListener('DOMContentLoaded', function() {
     const forms = document.querySelectorAll('form[action="/run"]');
     forms.forEach(form => {
-        form.addEventListener('submit', function() {
-            setTimeout(switchToOutputTab, 100);
+        form.addEventListener('submit', function(e) {
+            commandExecuted = true;
+            const button = form.querySelector('button[type="submit"]');
+            if (button) {
+                button.disabled = true;
+                button.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Running...';
+                
+                // Re-enable button after form submission
+                setTimeout(() => {
+                    button.disabled = false;
+                    button.innerHTML = button.getAttribute('data-original-text') || 'Run Command';
+                }, 2000);
+            }
         });
+        
+        // Store original button text
+        const button = form.querySelector('button[type="submit"]');
+        if (button) {
+            button.setAttribute('data-original-text', button.innerHTML);
+        }
     });
     
     // Start auto-refresh
     startAutoRefresh();
     
-    // Add visual feedback for button clicks
-    const buttons = document.querySelectorAll('button[type="submit"]');
-    buttons.forEach(button => {
-        button.addEventListener('click', function() {
-            this.disabled = true;
-            setTimeout(() => {
-                this.disabled = false;
-            }, 1000);
+    // Check for output periodically after page load
+    setTimeout(checkForNewOutput, 1000);
+    
+    // Add Bootstrap tab event listeners
+    const tabTriggers = document.querySelectorAll('[data-bs-toggle="tab"]');
+    tabTriggers.forEach(trigger => {
+        trigger.addEventListener('shown.bs.tab', function (event) {
+            const targetId = event.target.getAttribute('data-bs-target');
+            if (targetId === '#output') {
+                // Force refresh when output tab is shown
+                setTimeout(refreshOutput, 100);
+            } else if (targetId === '#about') {
+                // Force refresh when about tab is shown
+                setTimeout(updateStats, 100);
+            }
         });
     });
 });

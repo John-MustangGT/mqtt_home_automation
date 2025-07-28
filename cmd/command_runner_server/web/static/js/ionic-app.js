@@ -1,213 +1,264 @@
-/* Custom styles for Ionic Command Runner */
+// Global variables for Ionic interface
+let autoRefreshEnabled = true;
+let refreshIntervals = [];
+let currentTab = 'commands';
 
-:root {
-  --ion-color-primary: #3880ff;
-  --ion-color-primary-rgb: 56, 128, 255;
-  --ion-color-primary-contrast: #ffffff;
-  --ion-color-primary-contrast-rgb: 255, 255, 255;
-  --ion-color-primary-shade: #3171e0;
-  --ion-color-primary-tint: #4c8dff;
+// Initialize Ionic app
+document.addEventListener('DOMContentLoaded', function() {
+    initializeIonicApp();
+});
 
-  --ion-color-secondary: #3dc2ff;
-  --ion-color-secondary-rgb: 61, 194, 255;
-  --ion-color-secondary-contrast: #ffffff;
-  --ion-color-secondary-contrast-rgb: 255, 255, 255;
-  --ion-color-secondary-shade: #36abe0;
-  --ion-color-secondary-tint: #50c8ff;
-
-  --ion-color-tertiary: #5260ff;
-  --ion-color-tertiary-rgb: 82, 96, 255;
-  --ion-color-tertiary-contrast: #ffffff;
-  --ion-color-tertiary-contrast-rgb: 255, 255, 255;
-  --ion-color-tertiary-shade: #4854e0;
-  --ion-color-tertiary-tint: #6370ff;
-
-  --ion-color-success: #2dd36f;
-  --ion-color-success-rgb: 45, 211, 111;
-  --ion-color-success-contrast: #ffffff;
-  --ion-color-success-contrast-rgb: 255, 255, 255;
-  --ion-color-success-shade: #28ba62;
-  --ion-color-success-tint: #42d77d;
-
-  --ion-color-warning: #ffc409;
-  --ion-color-warning-rgb: 255, 196, 9;
-  --ion-color-warning-contrast: #000000;
-  --ion-color-warning-contrast-rgb: 0, 0, 0;
-  --ion-color-warning-shade: #e0ac08;
-  --ion-color-warning-tint: #ffca22;
-
-  --ion-color-danger: #eb445a;
-  --ion-color-danger-rgb: 235, 68, 90;
-  --ion-color-danger-contrast: #ffffff;
-  --ion-color-danger-contrast-rgb: 255, 255, 255;
-  --ion-color-danger-shade: #cf3c4f;
-  --ion-color-danger-tint: #ed576b;
-
-  --ion-color-dark: #222428;
-  --ion-color-dark-rgb: 34, 36, 40;
-  --ion-color-dark-contrast: #ffffff;
-  --ion-color-dark-contrast-rgb: 255, 255, 255;
-  --ion-color-dark-shade: #1e2023;
-  --ion-color-dark-tint: #383a3e;
-
-  --ion-color-medium: #92949c;
-  --ion-color-medium-rgb: 146, 148, 156;
-  --ion-color-medium-contrast: #ffffff;
-  --ion-color-medium-contrast-rgb: 255, 255, 255;
-  --ion-color-medium-shade: #808289;
-  --ion-color-medium-tint: #9d9fa6;
-
-  --ion-color-light: #f4f5f8;
-  --ion-color-light-rgb: 244, 245, 248;
-  --ion-color-light-contrast: #000000;
-  --ion-color-light-contrast-rgb: 0, 0, 0;
-  --ion-color-light-shade: #d7d8da;
-  --ion-color-light-tint: #f5f6f9;
+function initializeIonicApp() {
+    // Set up segment change handler
+    const segment = document.getElementById('main-segment');
+    if (segment) {
+        segment.addEventListener('ionChange', handleSegmentChange);
+    }
+    
+    // Set up command form handlers
+    const forms = document.querySelectorAll('form[action="/run"]');
+    forms.forEach(form => {
+        form.addEventListener('submit', function(e) {
+            const button = form.querySelector('ion-button');
+            if (button) {
+                button.disabled = true;
+                setTimeout(() => {
+                    button.disabled = false;
+                    switchToOutputTab();
+                }, 1000);
+            }
+        });
+    });
+    
+    // Start auto-refresh
+    startAutoRefresh();
 }
 
-/* Custom styles */
-.tab-content {
-  display: none;
-  padding: 16px;
+// Handle segment tab changes
+function handleSegmentChange(event) {
+    const selectedTab = event.detail.value;
+    currentTab = selectedTab;
+    
+    // Hide all tab contents
+    const tabContents = document.querySelectorAll('.tab-content');
+    tabContents.forEach(content => {
+        content.classList.remove('active');
+    });
+    
+    // Show selected tab content
+    const activeContent = document.getElementById(selectedTab + '-content');
+    if (activeContent) {
+        activeContent.classList.add('active');
+    }
+    
+    // Update stats if about tab is selected
+    if (selectedTab === 'about') {
+        updateStats();
+    }
 }
 
-.tab-content.active {
-  display: block;
+// Auto-refresh output tab if it's active
+function refreshOutput() {
+    if (!autoRefreshEnabled) return;
+    
+    if (currentTab === 'output') {
+        fetch('/output')
+            .then(response => response.text())
+            .then(data => {
+                const outputElement = document.getElementById('output-display');
+                if (outputElement) {
+                    outputElement.textContent = data;
+                }
+            })
+            .catch(error => {
+                console.error('Error fetching output:', error);
+            });
+    }
 }
 
-.command-button {
-  margin: 8px 0;
-  font-weight: 500;
+// Update current time in header
+function updateTime() {
+    if (!autoRefreshEnabled) return;
+    
+    fetch('/api/time')
+        .then(response => response.text())
+        .then(time => {
+            const timeElement = document.querySelector('#time-display ion-label');
+            if (timeElement) {
+                timeElement.textContent = time;
+            }
+        })
+        .catch(error => {
+            console.error('Error fetching time:', error);
+        });
 }
 
-.command-button:hover {
-  transform: translateY(-2px);
-  transition: transform 0.2s ease-in-out;
+// Update system stats in about tab
+function updateStats() {
+    if (!autoRefreshEnabled) return;
+    
+    if (currentTab === 'about') {
+        fetch('/api/stats')
+            .then(response => response.json())
+            .then(data => {
+                const elements = {
+                    'server-uptime': data.server_uptime,
+                    'system-uptime': data.system_uptime,
+                    'system-load': data.system_load,
+                    'memory-info': data.memory_info,
+                    'last-reload': data.last_reload,
+                    'button-count': data.button_count
+                };
+                
+                Object.entries(elements).forEach(([id, value]) => {
+                    const element = document.getElementById(id);
+                    if (element) {
+                        element.textContent = value;
+                    }
+                });
+            })
+            .catch(error => {
+                console.error('Error fetching stats:', error);
+            });
+    }
 }
 
-.output-terminal {
-  background-color: #1e1e1e;
-  color: #d4d4d4;
-  font-family: 'Courier New', Courier, monospace;
-  font-size: 0.875rem;
-  line-height: 1.4;
-  padding: 16px;
-  border-radius: 8px;
-  white-space: pre-wrap;
-  word-wrap: break-word;
-  overflow-y: auto;
-  max-height: 400px;
-  border: 1px solid var(--ion-color-medium);
+// Toggle auto-refresh functionality
+function toggleAutoRefresh() {
+    autoRefreshEnabled = !autoRefreshEnabled;
+    const textElement = document.getElementById('auto-refresh-text');
+    const iconElement = document.getElementById('refresh-icon');
+    
+    if (autoRefreshEnabled) {
+        textElement.textContent = 'Pause Auto-refresh';
+        if (iconElement) {
+            iconElement.name = 'pause-outline';
+        }
+        startAutoRefresh();
+    } else {
+        textElement.textContent = 'Resume Auto-refresh';
+        if (iconElement) {
+            iconElement.name = 'play-outline';
+        }
+        stopAutoRefresh();
+    }
 }
 
-.xml-display {
-  background-color: #f8f9fa;
-  color: #212529;
-  font-family: 'Courier New', Courier, monospace;
-  font-size: 0.875rem;
-  line-height: 1.4;
-  padding: 16px;
-  border-radius: 8px;
-  border: 1px solid var(--ion-color-light-shade);
-  overflow-x: auto;
-  white-space: pre-wrap;
+// Start auto-refresh intervals
+function startAutoRefresh() {
+    stopAutoRefresh(); // Clear existing intervals
+    refreshIntervals.push(setInterval(refreshOutput, 2000));
+    refreshIntervals.push(setInterval(updateTime, 1000));
+    refreshIntervals.push(setInterval(updateStats, 5000));
 }
 
-/* Loading animation for buttons */
-.command-button:disabled {
-  position: relative;
-  opacity: 0.6;
+// Stop auto-refresh intervals
+function stopAutoRefresh() {
+    refreshIntervals.forEach(interval => clearInterval(interval));
+    refreshIntervals = [];
 }
 
-.command-button:disabled::after {
-  content: "";
-  position: absolute;
-  width: 16px;
-  height: 16px;
-  top: 50%;
-  left: 50%;
-  margin-left: -8px;
-  margin-top: -8px;
-  border: 2px solid var(--ion-color-primary-contrast);
-  border-radius: 50%;
-  border-top-color: transparent;
-  animation: spin 1s linear infinite;
+// Clear output function
+function clearOutput() {
+    const outputElement = document.getElementById('output-display');
+    if (outputElement) {
+        outputElement.textContent = 'Output cleared.';
+    }
 }
 
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
+// Switch to output tab when command is executed
+function switchToOutputTab() {
+    const segment = document.getElementById('main-segment');
+    if (segment) {
+        segment.value = 'output';
+        currentTab = 'output';
+        
+        // Manually trigger tab change
+        const tabContents = document.querySelectorAll('.tab-content');
+        tabContents.forEach(content => {
+            content.classList.remove('active');
+        });
+        
+        const outputContent = document.getElementById('output-content');
+        if (outputContent) {
+            outputContent.classList.add('active');
+        }
+        
+        // Refresh output immediately
+        setTimeout(refreshOutput, 100);
+    }
 }
 
-/* Segment styling */
-ion-segment {
-  margin: 16px;
+// View XML configuration in modal
+function viewXmlConfig() {
+    fetch('/config.xml')
+        .then(response => response.text())
+        .then(data => {
+            const xmlContent = document.getElementById('xml-content');
+            if (xmlContent) {
+                xmlContent.textContent = data;
+            }
+            
+            const modal = document.getElementById('xml-modal');
+            if (modal) {
+                modal.isOpen = true;
+            }
+        })
+        .catch(error => {
+            console.error('Error fetching XML config:', error);
+            // Show Ionic toast or alert
+            showIonicAlert('Error', 'Error loading XML configuration');
+        });
 }
 
-/* Card enhancements */
-ion-card {
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+// Close XML modal
+function closeXmlModal() {
+    const modal = document.getElementById('xml-modal');
+    if (modal) {
+        modal.isOpen = false;
+    }
 }
 
-/* Button spacing */
-ion-button {
-  margin: 4px 0;
+// Download XML config
+function downloadXmlConfig() {
+    window.open('/config.xml', '_blank');
 }
 
-/* Time display in header */
-#time-display {
-  font-size: 0.875rem;
+// Refresh about tab information
+function refreshAbout() {
+    updateStats();
 }
 
-/* List item styling */
-ion-item {
-  --padding-start: 16px;
-  --inner-padding-end: 16px;
+// Show Ionic alert (utility function)
+function showIonicAlert(header, message) {
+    // Create and present an Ionic alert
+    const alert = document.createElement('ion-alert');
+    alert.header = header;
+    alert.message = message;
+    alert.buttons = ['OK'];
+    
+    document.body.appendChild(alert);
+    alert.present();
+    
+    // Remove alert after it's dismissed
+    alert.addEventListener('didDismiss', () => {
+        document.body.removeChild(alert);
+    });
 }
 
-ion-item h3 {
-  margin: 0;
-  font-weight: 600;
-  color: var(--ion-color-dark);
-}
-
-ion-item p {
-  margin: 4px 0 0 0;
-  color: var(--ion-color-medium-shade);
-}
-
-/* Modal styling */
-ion-modal {
-  --height: 80vh;
-  --border-radius: 16px;
-}
-
-/* Responsive adjustments */
-@media (max-width: 768px) {
-  .command-button {
-    font-size: 0.875rem;
-  }
-  
-  .output-terminal {
-    font-size: 0.75rem;
-    max-height: 300px;
-  }
-  
-  ion-segment {
-    margin: 8px;
-  }
-  
-  .tab-content {
-    padding: 8px;
-  }
-}
-
-/* Dark mode support */
-@media (prefers-color-scheme: dark) {
-  .xml-display {
-    background-color: #2d2d2d;
-    color: #f8f8f2;
-    border-color: var(--ion-color-dark-shade);
-  }
+// Show Ionic toast (utility function)
+function showIonicToast(message, color = 'primary') {
+    const toast = document.createElement('ion-toast');
+    toast.message = message;
+    toast.duration = 2000;
+    toast.color = color;
+    toast.position = 'bottom';
+    
+    document.body.appendChild(toast);
+    toast.present();
+    
+    // Remove toast after it's dismissed
+    toast.addEventListener('didDismiss', () => {
+        document.body.removeChild(toast);
+    });
 }

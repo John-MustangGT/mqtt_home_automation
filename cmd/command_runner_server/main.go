@@ -149,7 +149,7 @@ func runCommandHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	
 	// Execute command
-	go executeCommand(name, command)
+	executeCommand(name, command)
 	
 	// Redirect back to home and switch to output tab
 	w.Header().Set("Content-Type", "text/html")
