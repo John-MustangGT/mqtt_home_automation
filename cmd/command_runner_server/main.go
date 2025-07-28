@@ -49,6 +49,14 @@ var configFile string
 var watchedFiles = make(map[string]time.Time)
 var serverStartTime time.Time
 var lastReloadTime time.Time
+var debugMode bool // Debug flag
+
+// Debug logging function
+func debugLog(format string, args ...interface{}) {
+	if debugMode {
+		log.Printf("[DEBUG] "+format, args...)
+	}
+}
 
 // HTML template
 // Templates will be loaded from files
@@ -136,34 +144,34 @@ func homeHandler(w http.ResponseWriter, r *http.Request) {
 
 func runCommandHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
-		log.Println("Non-POST request to /run, redirecting")
+		debugLog("Non-POST request to /run, redirecting")
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
-
+	
 	command := r.FormValue("command")
 	name := r.FormValue("name")
-
-	log.Printf("Received command: %s (name: %s)", command, name)
-
+	
+	debugLog("Received command: %s (name: %s)", command, name)
+	
 	if command == "" {
-		log.Println("Empty command, redirecting")
+		debugLog("Empty command, redirecting")
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
-
+	
 	// Execute command synchronously so output is available immediately
-	log.Printf("Executing command: %s", command)
+	debugLog("Executing command: %s", command)
 	executeCommand(name, command)
-	log.Printf("Command execution completed, current output length: %d", len(commandOutputs["latest"]))
-
+	debugLog("Command execution completed, current output length: %d", len(commandOutputs["latest"]))
+	
 	// Simple redirect back to home page
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 func outputHandler(w http.ResponseWriter, r *http.Request) {
 	output := getLatestOutput()
-	log.Printf("Output handler called, returning %d characters", len(output))
+	debugLog("Output handler called, returning %d characters", len(output))
 	w.Header().Set("Content-Type", "text/plain")
 	w.Write([]byte(output))
 }
@@ -171,54 +179,54 @@ func outputHandler(w http.ResponseWriter, r *http.Request) {
 func executeCommand(name, command string) {
 	timestamp := time.Now().Format("2006-01-02 15:04:05")
 	output := fmt.Sprintf("[%s] Executing: %s\n", timestamp, name)
-
-	log.Printf("Starting execution of command: %s", command)
-
+	
+	debugLog("Starting execution of command: %s", command)
+	
 	// Split command into parts
 	parts := strings.Fields(command)
 	if len(parts) == 0 {
 		errorMsg := "Error: Empty command\n\n"
 		appendOutput(output + errorMsg)
-		log.Println("Empty command parts")
+		debugLog("Empty command parts")
 		return
 	}
-
+	
 	// Execute command
 	cmd := exec.Command(parts[0], parts[1:]...)
 	result, err := cmd.CombinedOutput()
-
+	
 	if err != nil {
 		output += fmt.Sprintf("Error: %v\n", err)
-		log.Printf("Command execution error: %v", err)
+		debugLog("Command execution error: %v", err)
 	} else {
-		log.Printf("Command executed successfully, output length: %d", len(result))
+		debugLog("Command executed successfully, output length: %d", len(result))
 	}
-
+	
 	output += string(result) + "\n" + strings.Repeat("-", 50) + "\n\n"
 	appendOutput(output)
-
-	log.Printf("Command output appended, total output length: %d", len(commandOutputs["latest"]))
+	
+	debugLog("Command output appended, total output length: %d", len(commandOutputs["latest"]))
 }
 
 func appendOutput(text string) {
 	// Keep only last 10KB of output to prevent memory issues
 	const maxOutputSize = 10240
-
+	
 	commandOutputs["latest"] += text
-
+	
 	if len(commandOutputs["latest"]) > maxOutputSize {
 		commandOutputs["latest"] = commandOutputs["latest"][len(commandOutputs["latest"])-maxOutputSize:]
 	}
-
-	log.Printf("Output appended, current total length: %d", len(commandOutputs["latest"]))
+	
+	debugLog("Output appended, current total length: %d", len(commandOutputs["latest"]))
 }
 
 func getLatestOutput() string {
 	if output, exists := commandOutputs["latest"]; exists {
-		log.Printf("Returning output of length: %d", len(output))
+		debugLog("Returning output of length: %d", len(output))
 		return output
 	}
-	log.Println("No output exists, returning default message")
+	debugLog("No output exists, returning default message")
 	return "No commands executed yet."
 }
 
@@ -426,7 +434,7 @@ func checkForChanges() bool {
 		}
 		
 		if lastModTime, exists := watchedFiles[file]; !exists || currentModTime.After(lastModTime) {
-			log.Printf("File changed: %s", file)
+			debugLog("File changed: %s", file)
 			watchedFiles[file] = currentModTime
 			changed = true
 		}
@@ -440,11 +448,11 @@ func startFileWatcher() {
 	go func() {
 		for range ticker.C {
 			if checkForChanges() {
-				log.Println("Changes detected, reloading configuration...")
+				debugLog("Changes detected, reloading configuration...")
 				if err := loadConfig(configFile); err != nil {
 					log.Printf("Error reloading config: %v", err)
 				} else {
-					log.Println("Configuration successfully reloaded")
+					debugLog("Configuration successfully reloaded")
 				}
 			}
 		}
@@ -454,10 +462,16 @@ func startFileWatcher() {
 func main() {
 	// Parse command line arguments
 	configFilePtr := flag.String("config", "config.xml", "Path to the XML configuration file")
+	debugPtr := flag.Bool("debug", false, "Enable debug logging")
 	flag.Parse()
 	
 	configFile = *configFilePtr
+	debugMode = *debugPtr
 	serverStartTime = time.Now()
+	
+	if debugMode {
+		log.Println("Debug mode enabled")
+	}
 	
 	// Load initial configuration
 	if err := loadConfig(configFile); err != nil {
@@ -489,6 +503,9 @@ func main() {
 	fmt.Printf("Using web directory: %s\n", config.Server.WebDir)
 	fmt.Printf("UI Framework: %s\n", config.Server.UIFramework)
 	fmt.Printf("File watching enabled - server will auto-reload on changes\n")
+	if debugMode {
+		fmt.Printf("Debug mode: ENABLED\n")
+	}
 	
 	log.Fatal(http.ListenAndServe(address, nil))
 }

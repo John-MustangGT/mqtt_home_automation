@@ -1,41 +1,130 @@
 // Global variables
 let autoRefreshEnabled = true;
 let refreshIntervals = [];
-let lastOutputLength = 0;
+let debugMode = false; // Can be enabled via URL parameter or localStorage
+
+// Debug logging function
+function debugLog(message, ...args) {
+    if (debugMode) {
+        console.log('[DEBUG]', message, ...args);
+    }
+}
+
+// Check for debug mode on load
+function initDebugMode() {
+    // Check URL parameter
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('debug') === 'true') {
+        debugMode = true;
+        debugLog('Debug mode enabled via URL parameter');
+    }
+    
+    // Check localStorage
+    if (localStorage.getItem('commandRunnerDebug') === 'true') {
+        debugMode = true;
+        debugLog('Debug mode enabled via localStorage');
+    }
+    
+    // Add debug toggle to page if debug mode is enabled
+    if (debugMode) {
+        addDebugControls();
+    }
+}
+
+// Add debug controls to the page
+function addDebugControls() {
+    const debugPanel = document.createElement('div');
+    debugPanel.id = 'debug-panel';
+    debugPanel.className = 'position-fixed bottom-0 end-0 p-2 bg-dark text-light rounded-top-start';
+    debugPanel.style.zIndex = '9999';
+    debugPanel.innerHTML = `
+        <div class="mb-2"><strong>Debug Panel</strong></div>
+        <button class="btn btn-sm btn-outline-light me-1" onclick="forceRefreshOutput()">Refresh Output</button>
+        <button class="btn btn-sm btn-outline-light me-1" onclick="clearDebugLog()">Clear Console</button>
+        <button class="btn btn-sm btn-outline-light" onclick="toggleDebugMode()">Disable Debug</button>
+        <div class="mt-2 small">
+            <div>Auto-refresh: <span id="debug-auto-refresh">enabled</span></div>
+            <div>Output length: <span id="debug-output-length">0</span></div>
+        </div>
+    `;
+    document.body.appendChild(debugPanel);
+    
+    // Update debug info periodically
+    setInterval(updateDebugInfo, 1000);
+}
+
+// Update debug information
+function updateDebugInfo() {
+    if (!debugMode) return;
+    
+    const autoRefreshElement = document.getElementById('debug-auto-refresh');
+    const outputLengthElement = document.getElementById('debug-output-length');
+    
+    if (autoRefreshElement) {
+        autoRefreshElement.textContent = autoRefreshEnabled ? 'enabled' : 'disabled';
+    }
+    
+    if (outputLengthElement) {
+        const outputContent = document.getElementById('output-content');
+        if (outputContent) {
+            outputLengthElement.textContent = outputContent.textContent.length;
+        }
+    }
+}
+
+// Toggle debug mode
+function toggleDebugMode() {
+    debugMode = !debugMode;
+    if (debugMode) {
+        localStorage.setItem('commandRunnerDebug', 'true');
+        location.reload(); // Reload to add debug controls
+    } else {
+        localStorage.removeItem('commandRunnerDebug');
+        const debugPanel = document.getElementById('debug-panel');
+        if (debugPanel) {
+            debugPanel.remove();
+        }
+    }
+}
+
+// Clear debug log
+function clearDebugLog() {
+    console.clear();
+    debugLog('Console cleared');
+}
 
 // Auto-refresh output tab if it's active
 function refreshOutput() {
-    console.log('Refreshing output...');
+    debugLog('Refreshing output...');
     
     fetch('/output')
         .then(response => {
-            console.log('Output response status:', response.status);
+            debugLog('Output response status:', response.status);
             return response.text();
         })
         .then(data => {
-            console.log('Output data length:', data.length);
-            console.log('Output preview:', data.substring(0, 100));
+            debugLog('Output data length:', data.length);
+            if (debugMode) {
+                debugLog('Output preview:', data.substring(0, 100));
+            }
             
             const outputElement = document.getElementById('output-content');
             if (outputElement) {
                 outputElement.textContent = data;
                 // Auto-scroll to bottom
                 outputElement.scrollTop = outputElement.scrollHeight;
-                
-                // Update last known length
-                lastOutputLength = data.length;
             } else {
-                console.error('Output element not found');
+                debugLog('Output element not found');
             }
         })
         .catch(error => {
-            console.error('Error fetching output:', error);
+            debugLog('Error fetching output:', error);
         });
 }
 
 // Force refresh output (called manually)
 function forceRefreshOutput() {
-    console.log('Force refreshing output...');
+    debugLog('Force refreshing output...');
     refreshOutput();
 }
 
@@ -52,7 +141,7 @@ function updateTime() {
             }
         })
         .catch(error => {
-            console.error('Error fetching time:', error);
+            debugLog('Error fetching time:', error);
         });
 }
 
@@ -61,6 +150,7 @@ function updateStats() {
     if (!autoRefreshEnabled) return;
     
     if (document.getElementById('about-tab').classList.contains('active')) {
+        debugLog('Updating stats...');
         fetch('/api/stats')
             .then(response => response.json())
             .then(data => {
@@ -79,9 +169,10 @@ function updateStats() {
                         element.textContent = value;
                     }
                 });
+                debugLog('Stats updated');
             })
             .catch(error => {
-                console.error('Error fetching stats:', error);
+                debugLog('Error fetching stats:', error);
             });
     }
 }
@@ -97,14 +188,14 @@ function toggleAutoRefresh() {
             textElement.parentElement.innerHTML = '⏸️ <span id="auto-refresh-text">Pause Auto-refresh</span>';
         }
         startAutoRefresh();
-        console.log('Auto-refresh enabled');
+        debugLog('Auto-refresh enabled');
     } else {
         if (textElement) {
             textElement.textContent = 'Resume Auto-refresh';
             textElement.parentElement.innerHTML = '▶️ <span id="auto-refresh-text">Resume Auto-refresh</span>';
         }
         stopAutoRefresh();
-        console.log('Auto-refresh disabled');
+        debugLog('Auto-refresh disabled');
     }
 }
 
@@ -123,25 +214,25 @@ function startAutoRefresh() {
     refreshIntervals.push(setInterval(updateTime, 1000));
     refreshIntervals.push(setInterval(updateStats, 5000));
     
-    console.log('Auto-refresh intervals started');
+    debugLog('Auto-refresh intervals started');
 }
 
 // Stop auto-refresh intervals
 function stopAutoRefresh() {
     refreshIntervals.forEach(interval => clearInterval(interval));
     refreshIntervals = [];
-    console.log('Auto-refresh intervals stopped');
+    debugLog('Auto-refresh intervals stopped');
 }
 
 // Clear output function
 function clearOutput() {
     document.getElementById('output-content').textContent = 'Output cleared.';
-    lastOutputLength = 0;
+    debugLog('Output cleared');
 }
 
 // Auto-switch to output tab when command is executed
 function switchToOutputTab() {
-    console.log('Switching to output tab...');
+    debugLog('Switching to output tab...');
     const outputTab = document.getElementById('output-tab');
     if (outputTab) {
         outputTab.click();
@@ -154,30 +245,36 @@ function switchToOutputTab() {
 
 // View XML configuration in modal
 function viewXmlConfig() {
+    debugLog('Loading XML config...');
     fetch('/config.xml')
         .then(response => response.text())
         .then(data => {
             document.getElementById('xml-content').textContent = data;
             const modal = new bootstrap.Modal(document.getElementById('xmlConfigModal'));
             modal.show();
+            debugLog('XML config modal shown');
         })
         .catch(error => {
-            console.error('Error fetching XML config:', error);
+            debugLog('Error fetching XML config:', error);
             alert('Error loading XML configuration');
         });
 }
 
 // Refresh about tab information
 function refreshAbout() {
+    debugLog('Refreshing about tab...');
     updateStats();
 }
 
 // Add event listeners to command forms
 document.addEventListener('DOMContentLoaded', function() {
-    console.log('DOM loaded, initializing app...');
+    // Initialize debug mode
+    initDebugMode();
+    
+    debugLog('DOM loaded, initializing app...');
     
     const forms = document.querySelectorAll('form[action="/run"]');
-    console.log('Found', forms.length, 'command forms');
+    debugLog('Found', forms.length, 'command forms');
     
     forms.forEach((form, index) => {
         const button = form.querySelector('button[type="submit"]');
@@ -186,7 +283,7 @@ document.addEventListener('DOMContentLoaded', function() {
             button.setAttribute('data-original-text', button.innerHTML);
             
             form.addEventListener('submit', function(e) {
-                console.log('Command form', index, 'submitted');
+                debugLog('Command form', index, 'submitted');
                 
                 button.disabled = true;
                 button.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Running...';
@@ -207,12 +304,12 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Add Bootstrap tab event listeners
     const tabTriggers = document.querySelectorAll('[data-bs-toggle="tab"]');
-    console.log('Found', tabTriggers.length, 'tab triggers');
+    debugLog('Found', tabTriggers.length, 'tab triggers');
     
     tabTriggers.forEach(trigger => {
         trigger.addEventListener('shown.bs.tab', function (event) {
             const targetId = event.target.getAttribute('data-bs-target');
-            console.log('Tab switched to:', targetId);
+            debugLog('Tab switched to:', targetId);
             
             if (targetId === '#output') {
                 // Force refresh when output tab is shown
@@ -226,22 +323,12 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Initial output refresh
     setTimeout(() => {
-        console.log('Initial output refresh...');
+        debugLog('Initial output refresh...');
         forceRefreshOutput();
     }, 500);
     
     // Start auto-refresh
     startAutoRefresh();
     
-    // Add a manual refresh button to the output tab for debugging
-    const outputCard = document.querySelector('#output .card-header');
-    if (outputCard) {
-        const refreshButton = document.createElement('button');
-        refreshButton.className = 'btn btn-sm btn-outline-primary ms-2';
-        refreshButton.innerHTML = '🔄 Refresh';
-        refreshButton.onclick = forceRefreshOutput;
-        outputCard.appendChild(refreshButton);
-    }
-    
-    console.log('App initialization complete');
+    debugLog('App initialization complete');
 });
