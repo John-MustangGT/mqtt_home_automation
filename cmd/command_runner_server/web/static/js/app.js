@@ -1,25 +1,42 @@
 // Global variables
 let autoRefreshEnabled = true;
 let refreshIntervals = [];
-let commandExecuted = false;
+let lastOutputLength = 0;
 
 // Auto-refresh output tab if it's active
 function refreshOutput() {
-    if (!autoRefreshEnabled) return;
+    console.log('Refreshing output...');
     
-    if (document.getElementById('output-tab').classList.contains('active')) {
-        fetch('/output')
-            .then(response => response.text())
-            .then(data => {
-                document.getElementById('output-content').textContent = data;
+    fetch('/output')
+        .then(response => {
+            console.log('Output response status:', response.status);
+            return response.text();
+        })
+        .then(data => {
+            console.log('Output data length:', data.length);
+            console.log('Output preview:', data.substring(0, 100));
+            
+            const outputElement = document.getElementById('output-content');
+            if (outputElement) {
+                outputElement.textContent = data;
                 // Auto-scroll to bottom
-                const outputElement = document.getElementById('output-content');
                 outputElement.scrollTop = outputElement.scrollHeight;
-            })
-            .catch(error => {
-                console.error('Error fetching output:', error);
-            });
-    }
+                
+                // Update last known length
+                lastOutputLength = data.length;
+            } else {
+                console.error('Output element not found');
+            }
+        })
+        .catch(error => {
+            console.error('Error fetching output:', error);
+        });
+}
+
+// Force refresh output (called manually)
+function forceRefreshOutput() {
+    console.log('Force refreshing output...');
+    refreshOutput();
 }
 
 // Update current time
@@ -29,7 +46,10 @@ function updateTime() {
     fetch('/api/time')
         .then(response => response.text())
         .then(time => {
-            document.getElementById('current-time').textContent = time;
+            const timeElement = document.getElementById('current-time');
+            if (timeElement) {
+                timeElement.textContent = time;
+            }
         })
         .catch(error => {
             console.error('Error fetching time:', error);
@@ -69,45 +89,66 @@ function updateStats() {
 // Toggle auto-refresh functionality
 function toggleAutoRefresh() {
     autoRefreshEnabled = !autoRefreshEnabled;
-    const button = document.getElementById('auto-refresh-text');
+    const textElement = document.getElementById('auto-refresh-text');
     
     if (autoRefreshEnabled) {
-        button.textContent = 'Pause Auto-refresh';
-        button.parentElement.innerHTML = '⏸️ <span id="auto-refresh-text">Pause Auto-refresh</span>';
+        if (textElement) {
+            textElement.textContent = 'Pause Auto-refresh';
+            textElement.parentElement.innerHTML = '⏸️ <span id="auto-refresh-text">Pause Auto-refresh</span>';
+        }
         startAutoRefresh();
+        console.log('Auto-refresh enabled');
     } else {
-        button.textContent = 'Resume Auto-refresh';
-        button.parentElement.innerHTML = '▶️ <span id="auto-refresh-text">Resume Auto-refresh</span>';
+        if (textElement) {
+            textElement.textContent = 'Resume Auto-refresh';
+            textElement.parentElement.innerHTML = '▶️ <span id="auto-refresh-text">Resume Auto-refresh</span>';
+        }
         stopAutoRefresh();
+        console.log('Auto-refresh disabled');
     }
 }
 
 // Start auto-refresh intervals
 function startAutoRefresh() {
     stopAutoRefresh(); // Clear existing intervals
-    refreshIntervals.push(setInterval(refreshOutput, 2000));
+    
+    // More frequent output refresh
+    refreshIntervals.push(setInterval(() => {
+        if (document.getElementById('output-tab').classList.contains('active') || 
+            document.visibilityState === 'visible') {
+            refreshOutput();
+        }
+    }, 1000));
+    
     refreshIntervals.push(setInterval(updateTime, 1000));
     refreshIntervals.push(setInterval(updateStats, 5000));
+    
+    console.log('Auto-refresh intervals started');
 }
 
 // Stop auto-refresh intervals
 function stopAutoRefresh() {
     refreshIntervals.forEach(interval => clearInterval(interval));
     refreshIntervals = [];
+    console.log('Auto-refresh intervals stopped');
 }
 
 // Clear output function
 function clearOutput() {
     document.getElementById('output-content').textContent = 'Output cleared.';
+    lastOutputLength = 0;
 }
 
 // Auto-switch to output tab when command is executed
 function switchToOutputTab() {
+    console.log('Switching to output tab...');
     const outputTab = document.getElementById('output-tab');
     if (outputTab) {
         outputTab.click();
         // Force refresh output after switching
-        setTimeout(refreshOutput, 100);
+        setTimeout(() => {
+            forceRefreshOutput();
+        }, 200);
     }
 }
 
@@ -131,66 +172,76 @@ function refreshAbout() {
     updateStats();
 }
 
-// Check if we should auto-switch to output tab on page load
-function checkForNewOutput() {
-    // Check if there's new output (not the default message)
-    fetch('/output')
-        .then(response => response.text())
-        .then(data => {
-            if (data && data.trim() !== 'No commands executed yet.' && commandExecuted) {
-                switchToOutputTab();
-                commandExecuted = false;
-            }
-        })
-        .catch(error => {
-            console.error('Error checking output:', error);
-        });
-}
-
 // Add event listeners to command forms
 document.addEventListener('DOMContentLoaded', function() {
+    console.log('DOM loaded, initializing app...');
+    
     const forms = document.querySelectorAll('form[action="/run"]');
-    forms.forEach(form => {
-        form.addEventListener('submit', function(e) {
-            commandExecuted = true;
-            const button = form.querySelector('button[type="submit"]');
-            if (button) {
+    console.log('Found', forms.length, 'command forms');
+    
+    forms.forEach((form, index) => {
+        const button = form.querySelector('button[type="submit"]');
+        if (button) {
+            // Store original button text
+            button.setAttribute('data-original-text', button.innerHTML);
+            
+            form.addEventListener('submit', function(e) {
+                console.log('Command form', index, 'submitted');
+                
                 button.disabled = true;
                 button.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Running...';
                 
-                // Re-enable button after form submission
+                // Switch to output tab after a short delay to allow form submission
+                setTimeout(() => {
+                    switchToOutputTab();
+                }, 100);
+                
+                // Re-enable button after submission
                 setTimeout(() => {
                     button.disabled = false;
-                    button.innerHTML = button.getAttribute('data-original-text') || 'Run Command';
-                }, 2000);
-            }
-        });
-        
-        // Store original button text
-        const button = form.querySelector('button[type="submit"]');
-        if (button) {
-            button.setAttribute('data-original-text', button.innerHTML);
+                    button.innerHTML = button.getAttribute('data-original-text');
+                }, 3000);
+            });
         }
     });
     
-    // Start auto-refresh
-    startAutoRefresh();
-    
-    // Check for output periodically after page load
-    setTimeout(checkForNewOutput, 1000);
-    
     // Add Bootstrap tab event listeners
     const tabTriggers = document.querySelectorAll('[data-bs-toggle="tab"]');
+    console.log('Found', tabTriggers.length, 'tab triggers');
+    
     tabTriggers.forEach(trigger => {
         trigger.addEventListener('shown.bs.tab', function (event) {
             const targetId = event.target.getAttribute('data-bs-target');
+            console.log('Tab switched to:', targetId);
+            
             if (targetId === '#output') {
                 // Force refresh when output tab is shown
-                setTimeout(refreshOutput, 100);
+                setTimeout(forceRefreshOutput, 100);
             } else if (targetId === '#about') {
                 // Force refresh when about tab is shown
                 setTimeout(updateStats, 100);
             }
         });
     });
+    
+    // Initial output refresh
+    setTimeout(() => {
+        console.log('Initial output refresh...');
+        forceRefreshOutput();
+    }, 500);
+    
+    // Start auto-refresh
+    startAutoRefresh();
+    
+    // Add a manual refresh button to the output tab for debugging
+    const outputCard = document.querySelector('#output .card-header');
+    if (outputCard) {
+        const refreshButton = document.createElement('button');
+        refreshButton.className = 'btn btn-sm btn-outline-primary ms-2';
+        refreshButton.innerHTML = '🔄 Refresh';
+        refreshButton.onclick = forceRefreshOutput;
+        outputCard.appendChild(refreshButton);
+    }
+    
+    console.log('App initialization complete');
 });

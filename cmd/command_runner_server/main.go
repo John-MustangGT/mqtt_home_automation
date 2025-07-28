@@ -136,79 +136,89 @@ func homeHandler(w http.ResponseWriter, r *http.Request) {
 
 func runCommandHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
+		log.Println("Non-POST request to /run, redirecting")
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
-	
+
 	command := r.FormValue("command")
 	name := r.FormValue("name")
-	
+
+	log.Printf("Received command: %s (name: %s)", command, name)
+
 	if command == "" {
+		log.Println("Empty command, redirecting")
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
-	
-	// Execute command
+
+	// Execute command synchronously so output is available immediately
+	log.Printf("Executing command: %s", command)
 	executeCommand(name, command)
-	
-	// Redirect back to home and switch to output tab
-	w.Header().Set("Content-Type", "text/html")
-	fmt.Fprintf(w, `
-		<script>
-			window.location.href = '/';
-			setTimeout(function() {
-				var outputTab = document.getElementById('output-tab');
-				if (outputTab) {
-					outputTab.click();
-				}
-			}, 100);
-		</script>
-	`)
+	log.Printf("Command execution completed, current output length: %d", len(commandOutputs["latest"]))
+
+	// Simple redirect back to home page
+	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 func outputHandler(w http.ResponseWriter, r *http.Request) {
+	output := getLatestOutput()
+	log.Printf("Output handler called, returning %d characters", len(output))
 	w.Header().Set("Content-Type", "text/plain")
-	w.Write([]byte(getLatestOutput()))
+	w.Write([]byte(output))
 }
 
 func executeCommand(name, command string) {
 	timestamp := time.Now().Format("2006-01-02 15:04:05")
 	output := fmt.Sprintf("[%s] Executing: %s\n", timestamp, name)
-	
+
+	log.Printf("Starting execution of command: %s", command)
+
 	// Split command into parts
 	parts := strings.Fields(command)
 	if len(parts) == 0 {
-		appendOutput(output + "Error: Empty command\n\n")
+		errorMsg := "Error: Empty command\n\n"
+		appendOutput(output + errorMsg)
+		log.Println("Empty command parts")
 		return
 	}
-	
+
 	// Execute command
 	cmd := exec.Command(parts[0], parts[1:]...)
 	result, err := cmd.CombinedOutput()
-	
+
 	if err != nil {
 		output += fmt.Sprintf("Error: %v\n", err)
+		log.Printf("Command execution error: %v", err)
+	} else {
+		log.Printf("Command executed successfully, output length: %d", len(result))
 	}
-	
+
 	output += string(result) + "\n" + strings.Repeat("-", 50) + "\n\n"
 	appendOutput(output)
+
+	log.Printf("Command output appended, total output length: %d", len(commandOutputs["latest"]))
 }
 
 func appendOutput(text string) {
 	// Keep only last 10KB of output to prevent memory issues
 	const maxOutputSize = 10240
-	
+
+	commandOutputs["latest"] += text
+
 	if len(commandOutputs["latest"]) > maxOutputSize {
 		commandOutputs["latest"] = commandOutputs["latest"][len(commandOutputs["latest"])-maxOutputSize:]
 	}
-	
-	commandOutputs["latest"] += text
+
+	log.Printf("Output appended, current total length: %d", len(commandOutputs["latest"]))
 }
 
 func getLatestOutput() string {
 	if output, exists := commandOutputs["latest"]; exists {
+		log.Printf("Returning output of length: %d", len(output))
 		return output
 	}
+	log.Println("No output exists, returning default message")
 	return "No commands executed yet."
 }
 
