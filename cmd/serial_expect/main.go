@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -50,7 +51,7 @@ type TryBlock struct {
 }
 
 type Command struct {
-	Type       string // "send", "expect", or "try"
+	Type       string // "send", "expect", "monitor", or "try"
 	Value      string
 	TryBlock   *TryBlock // Only used for try commands
 	ScriptMap  map[string]NamedScript // Only used for try commands
@@ -300,6 +301,22 @@ func (se *SerialExpect) executeScriptWithTimeout() error {
 	readChan := make(chan string, 100)
 	go se.readSerial(readChan)
 
+	// Check if any commands are monitor commands - if so, extend timeout
+	hasMonitorCommand := false
+	for _, cmd := range se.commands {
+		if cmd.Type == "monitor" {
+			hasMonitorCommand = true
+			break
+		}
+	}
+	
+	// If we have monitor commands, use a much longer timeout
+	if hasMonitorCommand {
+		ctx, cancel = context.WithTimeout(context.Background(), 24*time.Hour)
+		defer cancel()
+		se.logger.Printf("Extended timeout for monitor commands")
+	}
+
 	// Execute script with context
 	done := make(chan error, 1)
 	go func() {
@@ -310,6 +327,9 @@ func (se *SerialExpect) executeScriptWithTimeout() error {
 	case err := <-done:
 		return err
 	case <-ctx.Done():
+		if hasMonitorCommand {
+			return fmt.Errorf("script timeout exceeded (extended for monitor commands)")
+		}
 		return fmt.Errorf("script timeout exceeded (%v)", se.scriptTimeout)
 	}
 }
@@ -329,6 +349,10 @@ func (se *SerialExpect) executeScript(readChan <-chan string) error {
 			}
 		case "try":
 			if err := se.handleTry(cmd, readChan); err != nil {
+				return err
+			}
+		case "monitor":
+			if err := se.handleMonitor(cmd.Value, readChan); err != nil {
 				return err
 			}
 		}
@@ -442,7 +466,34 @@ func (se *SerialExpect) executeDryRun(inputFile string) error {
 						se.logger.Printf("PATTERN NOT FOUND (would trigger except): %s", subCmd.Value)
 						// In dry run, continue without failing
 					}
+				case "monitor":
+					se.logger.Printf("MONITOR: %s (dry run - showing next 10 lines)", subCmd.Value)
+					
+					// In dry run, just show some lines from the input
+					maxShow := 10
+					if lineIndex+maxShow > len(lines) {
+						maxShow = len(lines) - lineIndex
+					}
+					
+					for i := 0; i < maxShow && lineIndex < len(lines); i++ {
+						se.logger.Printf("RX: %s", lines[lineIndex])
+						lineIndex++
+					}
 				}
+			}
+		
+		case "monitor":
+			se.logger.Printf("MONITOR: %s (dry run - showing next 10 lines)", cmd.Value)
+			
+			// In dry run, just show some lines from the input
+			maxShow := 10
+			if lineIndex+maxShow > len(lines) {
+				maxShow = len(lines) - lineIndex
+			}
+			
+			for i := 0; i < maxShow && lineIndex < len(lines); i++ {
+				se.logger.Printf("RX: %s", lines[lineIndex])
+				lineIndex++
 			}
 		}
 	}
@@ -544,6 +595,12 @@ func parseScript(scriptText string) ([]Command, error) {
 		} else if strings.HasPrefix(line, "expect ") {
 			value := strings.TrimPrefix(line, "expect ")
 			commands = append(commands, Command{Type: "expect", Value: value})
+		} else if strings.HasPrefix(line, "monitor ") {
+			value := strings.TrimPrefix(line, "monitor ")
+			commands = append(commands, Command{Type: "monitor", Value: value})
+		} else if line == "monitor" {
+			// Monitor without parameters - monitor indefinitely
+			commands = append(commands, Command{Type: "monitor", Value: ""})
 		} else {
 			return nil, fmt.Errorf("invalid command on line %d: %s", i+1, line)
 		}
@@ -645,6 +702,11 @@ func (se *SerialExpect) handleTry(cmd Command, readChan <-chan string) error {
 					lastError = err
 					break
 				}
+			case "monitor":
+				if err := se.handleMonitor(subCmd.Value, readChan); err != nil {
+					lastError = err
+					break
+				}
 			}
 		}
 		
@@ -692,6 +754,11 @@ func (se *SerialExpect) handleTry(cmd Command, readChan <-chan string) error {
 					se.logger.Printf("TRY: Error in except script: %v", err)
 					// Continue with except script even if there are errors
 				}
+			case "monitor":
+				if err := se.handleMonitor(exceptCmd.Value, readChan); err != nil {
+					se.logger.Printf("TRY: Error in except script: %v", err)
+					// Continue with except script even if there are errors
+				}
 			}
 		}
 		
@@ -700,6 +767,72 @@ func (se *SerialExpect) handleTry(cmd Command, readChan <-chan string) error {
 	
 	// Return the original error from the main script
 	return fmt.Errorf("try block %q failed: %v", tryBlock.Name, lastError)
+}
+
+func (se *SerialExpect) handleMonitor(parameter string, readChan <-chan string) error {
+	se.logger.Printf("MONITOR: Starting monitoring with parameter: %q", parameter)
+	
+	// Parse the monitor parameter
+	var monitorDuration time.Duration
+	var maxLines int
+	var err error
+	
+	if parameter == "" {
+		// Monitor indefinitely
+		se.logger.Printf("MONITOR: Monitoring indefinitely (press Ctrl+C to stop)")
+		monitorDuration = 24 * time.Hour // Set a very long duration
+	} else {
+		// Try to parse as duration first
+		monitorDuration, err = time.ParseDuration(parameter)
+		if err != nil {
+			// Try to parse as line count
+			maxLines, err = strconv.Atoi(parameter)
+			if err != nil {
+				return fmt.Errorf("invalid monitor parameter %q: must be duration (e.g., 5m30s) or line count (e.g., 50)", parameter)
+			}
+			se.logger.Printf("MONITOR: Monitoring for %d lines", maxLines)
+		} else {
+			se.logger.Printf("MONITOR: Monitoring for %v", monitorDuration)
+		}
+	}
+	
+	var buffer strings.Builder
+	lineCount := 0
+	startTime := time.Now()
+	
+	// Set up timeout if monitoring by duration
+	var timeout <-chan time.Time
+	if maxLines == 0 {
+		timeout = time.After(monitorDuration)
+	}
+	
+	for {
+		select {
+		case char := <-readChan:
+			buffer.WriteByte(char[0]) // char is a string of length 1
+			
+			// Check for newline to count lines and output
+			if char == "\n" {
+				line := strings.TrimRight(buffer.String(), "\r\n")
+				se.logger.Printf("RX: %s", line)
+				buffer.Reset()
+				lineCount++
+				
+				// Check if we've reached the line limit
+				if maxLines > 0 && lineCount >= maxLines {
+					se.logger.Printf("MONITOR: Reached %d lines, stopping", maxLines)
+					return nil
+				}
+			}
+			
+		case <-timeout:
+			if maxLines == 0 {
+				elapsed := time.Since(startTime)
+				se.logger.Printf("MONITOR: Duration %v elapsed, stopping (received %d lines)", elapsed.Round(time.Second), lineCount)
+				return nil
+			}
+		}
+	}
 }
 
 func (se *SerialExpect) handleSend(value string) error {

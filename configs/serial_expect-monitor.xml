@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<config>
+  <serial device="/dev/ttyUSB0" speed="115200" parity="false" bits="8"/>
+  <timeout script="10m" receive="30s"/>
+  
+  <!-- Login script -->
+  <script name="login">
+    expect 'Login:'
+    send 'admin'
+    expect 'Password:'
+    send 'password123'
+    expect "root@"
+  </script>
+  
+  <!-- Monitor examples -->
+  <script name="monitor_time">
+    send 'show interfaces'
+    monitor 2m30s
+  </script>
+  
+  <script name="monitor_lines">
+    send 'show system processes'
+    monitor 50
+  </script>
+  
+  <script name="monitor_indefinite">
+    send 'tail -f /var/log/messages'
+    monitor
+  </script>
+  
+  <!-- Combined script with monitoring -->
+  <script name="full_session">
+    expect 'Login:'
+    send 'admin'
+    expect 'Password:'
+    send 'password123'
+    expect "root@"
+    send 'show version'
+    expect "root@"
+    send 'show interfaces brief'
+    monitor 10
+  </script>
+  
+  <!-- Try block with monitoring -->
+  <script name="check_status">
+    send 'show system status'
+    expect "Status:"
+  </script>
+  
+  <script name="monitor_fallback">
+    send 'tail -f /var/log/system.log'
+    monitor 30
+  </script>
+  
+  <try name="status_with_fallback" script="check_status" except="monitor_fallback" retry="true"/>
+</config>
