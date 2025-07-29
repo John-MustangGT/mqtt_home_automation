@@ -1,0 +1,19 @@
+[Unit]
+Description=Command Runner Server
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/usr/lib/command-runner
+ExecStart=/usr/bin/command-runner-server -config /etc/command-runner/config.xml
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=command-runner
+Environment=PATH=/usr/bin:/bin
+
+[Install]
+WantedBy=multi-user.target
