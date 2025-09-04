@@ -1,0 +1,37 @@
+[Unit]
+Description=MQTT Home Automation Server
+Documentation=https://github.com/John-MustangGT/mqtt_home_automation
+After=network.target network-online.target
+Wants=network-online.target
+ConditionPathExists=/etc/mqtt-home-automation/config.xml
+
+[Service]
+Type=simple
+User=mqtt-automation
+Group=mqtt-automation
+
+WorkingDirectory=/usr/local/lib/mqtt-home-automation
+ExecStart=/usr/local/bin/home-automation-server \
+    -config /etc/mqtt-home-automation/config.xml \
+    -webdir /usr/local/lib/mqtt-home-automation/web
+
+Restart=always
+RestartSec=5
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mqtt-home-automation
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/log/mqtt-home-automation /var/lib/mqtt-home-automation
+
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=HOME=/var/lib/mqtt-home-automation
+
+[Install]
+WantedBy=multi-user.target

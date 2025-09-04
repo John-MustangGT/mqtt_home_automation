@@ -1,0 +1,35 @@
+[Unit]
+Description=Command Runner HTTP Server
+Documentation=https://github.com/John-MustangGT/mqtt_home_automation
+After=network.target
+ConditionPathExists=/etc/mqtt-home-automation/command_runner.xml
+
+[Service]
+Type=simple
+User=mqtt-automation
+Group=mqtt-automation
+
+WorkingDirectory=/usr/local/lib/mqtt-home-automation
+ExecStart=/usr/local/bin/command_runner_server \
+    -config /etc/mqtt-home-automation/command_runner.xml
+
+Restart=always
+RestartSec=5
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=command-runner
+
+NoNewPrivileges=no
+PrivateTmp=yes
+ProtectSystem=false
+ProtectHome=no
+ReadWritePaths=/var/log/mqtt-home-automation /var/lib/mqtt-home-automation
+
+Environment=PATH=/usr/local/bin:/usr/bin:/bin:/sbin:/usr/sbin
+Environment=HOME=/var/lib/mqtt-home-automation
+
+[Install]
+WantedBy=multi-user.target
