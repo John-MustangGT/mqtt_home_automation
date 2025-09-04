@@ -77,33 +77,24 @@ deb: build
 	@mkdir -p $(PACKAGE_DIR)$(CONFIG_DIR)
 	@mkdir -p $(PACKAGE_DIR)$(SERVICE_DIR)
 	@mkdir -p $(PACKAGE_DIR)$(WEB_DIR)
-	
-	# Copy binaries
+	@mkdir -p $(PACKAGE_DIR)$(LIB_DIR)/command_runner_web
 	@echo "Copying binaries..."
 	cp cmd/home-automation-server/home-automation-server $(PACKAGE_DIR)$(BIN_DIR)/
 	cp cmd/command_runner_server/command_runner_server $(PACKAGE_DIR)$(BIN_DIR)/
 	cp cmd/mqtt_listener/mqtt_listener $(PACKAGE_DIR)$(BIN_DIR)/
 	cp cmd/serial_expect/serial_expect $(PACKAGE_DIR)$(BIN_DIR)/
-	
-	# Copy web files
 	@echo "Copying web files..."
-	cp -r web/* $(PACKAGE_DIR)$(WEB_DIR)/
-	cp -r cmd/command_runner_server/web/* $(PACKAGE_DIR)$(LIB_DIR)/command_runner_web/
-	
-	# Copy configuration files
+	@if [ -d "web" ]; then cp -r web/* $(PACKAGE_DIR)$(WEB_DIR)/; fi
+	@if [ -d "cmd/command_runner_server/web" ]; then cp -r cmd/command_runner_server/web/* $(PACKAGE_DIR)$(LIB_DIR)/command_runner_web/; fi
 	@echo "Copying configuration files..."
-	cp configs/*.xml $(PACKAGE_DIR)$(CONFIG_DIR)/
-	
-	# Copy systemd service files
+	@if [ -d "configs" ]; then cp configs/*.xml $(PACKAGE_DIR)$(CONFIG_DIR)/; fi
+	@echo "Creating command_runner.xml configuration..."
+	@if [ -f "scripts/create-config.sh" ]; then ./scripts/create-config.sh $(PACKAGE_DIR)$(CONFIG_DIR)/command_runner.xml; fi
 	@echo "Copying service files..."
-	cp debian/mqtt-home-automation.service $(PACKAGE_DIR)$(SERVICE_DIR)/
-	cp debian/command-runner.service $(PACKAGE_DIR)$(SERVICE_DIR)/
-	
-	# Generate DEBIAN control files
+	@if [ -f "debian/mqtt-home-automation.service" ]; then cp debian/mqtt-home-automation.service $(PACKAGE_DIR)$(SERVICE_DIR)/; fi
+	@if [ -f "debian/command-runner.service" ]; then cp debian/command-runner.service $(PACKAGE_DIR)$(SERVICE_DIR)/; fi
 	@echo "Generating Debian control files..."
 	./scripts/generate-debian-files.sh $(VERSION) $(ARCH) $(PACKAGE_DIR)
-	
-	# Build the package
 	@echo "Building .deb package..."
 	dpkg-deb --build $(PACKAGE_DIR)
 	@echo "Package created: $(BUILD_DIR)/$(PACKAGE_NAME).deb"
@@ -114,15 +105,12 @@ install: build
 	@mkdir -p $(DESTDIR)$(BIN_DIR)
 	@mkdir -p $(DESTDIR)$(LIB_DIR)
 	@mkdir -p $(DESTDIR)$(CONFIG_DIR)
-	
 	cp cmd/home-automation-server/home-automation-server $(DESTDIR)$(BIN_DIR)/
 	cp cmd/command_runner_server/command_runner_server $(DESTDIR)$(BIN_DIR)/
 	cp cmd/mqtt_listener/mqtt_listener $(DESTDIR)$(BIN_DIR)/
 	cp cmd/serial_expect/serial_expect $(DESTDIR)$(BIN_DIR)/
-	
 	cp -r web $(DESTDIR)$(LIB_DIR)/
 	cp configs/*.xml $(DESTDIR)$(CONFIG_DIR)/
-	
 	@echo "Installation complete!"
 
 # Development server (runs home automation server)
